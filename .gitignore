@@ -1,0 +1,36 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+dist/
+build/
+.cache/
+
+# Go
+vendor/
+*.exe
+*.test
+*.out
+services/api/tmp/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+claude.txt
+/.claude
+
+# Docker
+.docker/

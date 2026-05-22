@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS direct_chat_lookup;
+DROP TABLE IF EXISTS chat_members;
+DROP TABLE IF EXISTS chats;
+DROP TYPE IF EXISTS chat_type;
