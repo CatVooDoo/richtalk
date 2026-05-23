@@ -1,14 +1,15 @@
 # RichTalk — HTTP API Reference
 
 Base URL: `http://localhost/api`  
-All timestamps: ISO 8601 / RFC 3339 (`2024-01-15T10:30:00Z`)  
-All IDs: UUID v4
+All timestamps: RFC 3339 (`2024-01-15T10:30:00Z`)  
+All IDs: UUID v4  
+Content-Type: `application/json`
 
 ## Authentication
 
-Protected endpoints require `Authorization: Bearer <access_token>` header.  
-Access token lifetime: **15 minutes**.  
-Refresh token lifetime: **30 days** (rotated on each refresh).
+Protected endpoints require `Authorization: Bearer <access_token>`.  
+Access token TTL: **15 minutes**.  
+Refresh token TTL: **30 days** (rotated on each use).
 
 ---
 
@@ -16,7 +17,7 @@ Refresh token lifetime: **30 days** (rotated on each refresh).
 
 ### POST /api/auth/register
 
-Register a new user.
+Создаёт пользователя. Автоматически создаёт Notes-чат для нового пользователя.
 
 **Auth required:** No
 
@@ -24,7 +25,7 @@ Register a new user.
 ```json
 {
   "username": "alice",
-  "password": "s3cr3t_P@ssword"
+  "password": "s3cr3t"
 }
 ```
 
@@ -37,15 +38,15 @@ Register a new user.
     "created_at": "2024-01-15T10:00:00Z"
   },
   "access_token": "<jwt>",
-  "refresh_token": "<opaque_token>"
+  "refresh_token": "<opaque_hex_token>"
 }
 ```
 
 **Errors**
-| Code | Reason |
-|------|--------|
-| 400  | Validation failed (username too short, invalid characters) |
-| 409  | Username already taken |
+| Code | error.code | Reason |
+|------|------------|--------|
+| 400  | validation_error | username/password не прошли валидацию |
+| 409  | conflict | username уже занят |
 
 ---
 
@@ -57,42 +58,31 @@ Register a new user.
 ```json
 {
   "username": "alice",
-  "password": "s3cr3t_P@ssword"
+  "password": "s3cr3t"
 }
 ```
 
-**Response 200**
-```json
-{
-  "user": {
-    "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-    "username": "alice",
-    "created_at": "2024-01-15T10:00:00Z"
-  },
-  "access_token": "<jwt>",
-  "refresh_token": "<opaque_token>"
-}
-```
+**Response 200** — та же схема, что у register.
 
 **Errors**
-| Code | Reason |
-|------|--------|
-| 400  | Missing fields |
-| 401  | Invalid credentials |
+| Code | error.code | Reason |
+|------|------------|--------|
+| 400  | bad_request | Отсутствуют поля |
+| 401  | invalid_credentials | Неверный пароль или пользователь не найден |
 
 ---
 
 ### POST /api/auth/refresh
 
-Exchange a refresh token for a new access token + rotated refresh token.  
-Old refresh token is invalidated after this call.
+Обменивает refresh_token на новый access_token + ротированный refresh_token.  
+Старый refresh_token становится недействительным сразу после вызова.
 
 **Auth required:** No
 
 **Request**
 ```json
 {
-  "refresh_token": "<opaque_token>"
+  "refresh_token": "<opaque_hex_token>"
 }
 ```
 
@@ -100,44 +90,37 @@ Old refresh token is invalidated after this call.
 ```json
 {
   "access_token": "<new_jwt>",
-  "refresh_token": "<new_opaque_token>"
+  "refresh_token": "<new_opaque_hex_token>"
 }
 ```
 
 **Errors**
-| Code | Reason |
-|------|--------|
-| 401  | Token invalid, expired, or already rotated |
+| Code | error.code | Reason |
+|------|------------|--------|
+| 401  | invalid_refresh_token | Токен истёк, не существует или уже ротирован |
 
 ---
 
 ### POST /api/auth/logout
 
-Invalidates the provided refresh token (deletes it from DB).
+Удаляет refresh_token из БД.
 
 **Auth required:** Yes
 
 **Request**
 ```json
 {
-  "refresh_token": "<opaque_token>"
+  "refresh_token": "<opaque_hex_token>"
 }
 ```
 
 **Response 204** (no body)
-
-**Errors**
-| Code | Reason |
-|------|--------|
-| 401  | Not authenticated |
 
 ---
 
 ## Users
 
 ### GET /api/users/me
-
-Returns the authenticated user's profile.
 
 **Auth required:** Yes
 
@@ -150,36 +133,25 @@ Returns the authenticated user's profile.
 }
 ```
 
-**Errors**
-| Code | Reason |
-|------|--------|
-| 401  | Not authenticated |
-
 ---
 
 ### GET /api/users/search?q=alice
 
-Search users by username prefix. Used to find someone to start a chat with.
+Поиск пользователей по префиксу username.
 
 **Auth required:** Yes
 
 **Query params**
-| Param | Type   | Required | Description |
-|-------|--------|----------|-------------|
-| q     | string | Yes      | Username prefix, min 2 chars |
+| Param | Type | Required | Notes |
+|-------|------|----------|-------|
+| q | string | Yes | Минимум 2 символа |
 
 **Response 200**
 ```json
 {
   "users": [
-    {
-      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-      "username": "alice"
-    },
-    {
-      "id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e",
-      "username": "alice_smith"
-    }
+    { "id": "f47ac10b-...", "username": "alice" },
+    { "id": "b3d1c2e4-...", "username": "alice_smith" }
   ]
 }
 ```
@@ -187,8 +159,7 @@ Search users by username prefix. Used to find someone to start a chat with.
 **Errors**
 | Code | Reason |
 |------|--------|
-| 400  | Query too short (< 2 chars) |
-| 401  | Not authenticated |
+| 400  | q короче 2 символов |
 
 ---
 
@@ -196,7 +167,7 @@ Search users by username prefix. Used to find someone to start a chat with.
 
 ### GET /api/chats
 
-List all chats the current user is a member of, ordered by most recent message.
+Список всех чатов пользователя. Notes-чат всегда идёт первым.
 
 **Auth required:** Yes
 
@@ -206,6 +177,14 @@ List all chats the current user is a member of, ordered by most recent message.
   "chats": [
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "type": "notes",
+      "name": null,
+      "other_user": null,
+      "last_message": null,
+      "created_at": "2024-01-15T09:00:00Z"
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
       "type": "direct",
       "name": null,
       "other_user": {
@@ -216,7 +195,8 @@ List all chats the current user is a member of, ordered by most recent message.
         "id": "c4d5e6f7-...",
         "content": "Hey!",
         "author_id": "b3d1c2e4-...",
-        "created_at": "2024-01-15T10:29:00Z"
+        "created_at": "2024-01-15T10:29:00Z",
+        "deleted": false
       },
       "created_at": "2024-01-15T09:00:00Z"
     }
@@ -224,17 +204,29 @@ List all chats the current user is a member of, ordered by most recent message.
 }
 ```
 
+> `last_message.content` равен `""` если `deleted: true`.
+
+---
+
+### GET /api/chats/notes
+
+Возвращает Notes-чат текущего пользователя.  
+**Маршрут должен быть объявлен до `/chats/{chatID}`** (иначе chi перехватит `notes` как UUID).
+
+**Auth required:** Yes
+
+**Response 200** — объект чата (та же схема, что элемент в списке выше).
+
 **Errors**
 | Code | Reason |
 |------|--------|
-| 401  | Not authenticated |
+| 404  | Notes-чат не был создан при регистрации (нештатная ситуация) |
 
 ---
 
 ### POST /api/chats/direct
 
-Create or retrieve the existing direct chat with another user. **Idempotent.**  
-If a direct chat between the two users already exists, returns it with `201` replaced by `200`.
+Создаёт или возвращает существующий direct-чат с другим пользователем. **Идемпотентен.**
 
 **Auth required:** Yes
 
@@ -245,67 +237,55 @@ If a direct chat between the two users already exists, returns it with `201` rep
 }
 ```
 
-**Response 200** (existing) or **201** (created)
-```json
-{
-  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "type": "direct",
-  "other_user": {
-    "id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e",
-    "username": "bob"
-  },
-  "created_at": "2024-01-15T09:00:00Z"
-}
-```
-
-**Errors**
-| Code | Reason |
-|------|--------|
-| 400  | user_id missing or same as caller |
-| 401  | Not authenticated |
-| 404  | Target user not found |
-
----
-
-### GET /api/chats/{id}
-
-Get metadata for a single chat. Caller must be a member.
-
-**Auth required:** Yes
-
 **Response 200**
 ```json
 {
   "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "type": "direct",
+  "name": null,
   "other_user": {
     "id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e",
     "username": "bob"
   },
+  "last_message": null,
   "created_at": "2024-01-15T09:00:00Z"
 }
 ```
 
 **Errors**
-| Code | Reason |
-|------|--------|
-| 401  | Not authenticated |
-| 403  | Not a member of this chat |
-| 404  | Chat not found |
+| Code | error.code | Reason |
+|------|------------|--------|
+| 400  | bad_request | user_id отсутствует или некорректный UUID |
+| 400  | self_chat | user_id совпадает с вызывающим |
+| 404  | user_not_found | Целевой пользователь не найден |
 
 ---
 
-### GET /api/chats/{id}/messages?before=&limit=
+### GET /api/chats/{chatID}
 
-Paginated message history. Cursor-based, oldest-to-newest in response, but fetches backwards.
+**Auth required:** Yes (вызывающий должен быть членом чата)
+
+**Response 200** — объект чата (та же схема).
+
+**Errors**
+| Code | Reason |
+|------|--------|
+| 403  | Не является членом чата |
+| 404  | Чат не найден |
+
+---
+
+### GET /api/chats/{chatID}/messages
+
+Пагинированная история сообщений. Курсорная пагинация по `created_at`, ответ в порядке **от старых к новым**.
 
 **Auth required:** Yes
 
 **Query params**
-| Param  | Type              | Required | Default | Description |
-|--------|-------------------|----------|---------|-------------|
-| before | ISO 8601 datetime | No       | now()   | Return messages with created_at < before |
-| limit  | integer           | No       | 50      | 1–100 |
+| Param | Type | Required | Default | Notes |
+|-------|------|----------|---------|-------|
+| before | RFC 3339 datetime | No | now() | Вернуть сообщения с `created_at < before` |
+| limit | integer | No | 50 | Диапазон 1–100 |
 
 **Response 200**
 ```json
@@ -319,35 +299,45 @@ Paginated message history. Cursor-based, oldest-to-newest in response, but fetch
         "username": "bob"
       },
       "content": "Hey!",
+      "deleted": false,
+      "attachment_type": null,
       "created_at": "2024-01-15T10:29:00Z",
-      "updated_at": "2024-01-15T10:29:00Z",
-      "deleted_at": null
+      "updated_at": "2024-01-15T10:29:00Z"
     }
   ],
   "has_more": true,
-  "next_cursor": "2024-01-15T10:29:00Z"
+  "next_cursor": "2024-01-15T10:29:00.000000000Z"
 }
 ```
 
-> **Pagination flow:** Take `next_cursor` from the response and pass it as `before` in the next request. Stop when `has_more` is `false`.
+**Пагинация:** передать `next_cursor` как `before` в следующем запросе. Остановиться при `has_more: false`.
 
-> **Deleted messages:** Included in the list with `deleted_at` set and `content` replaced by `""`. Client renders "Сообщение удалено".
+**Удалённые сообщения** включены в список: `"deleted": true`, `"content": ""`. Клиент показывает плейсхолдер.
+
+**Поля сообщения**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `deleted` | bool | Мягкое удаление; при true `content` = `""` |
+| `attachment_type` | string\|null | Тип вложения (`"image"`, `"file"` и т.д.) — зарезервировано для будущего |
+| `attachment_url` | string\|null | URL файла — зарезервировано |
+| `attachment_name` | string\|null | Имя файла — зарезервировано |
+| `attachment_size` | int64\|null | Размер в байтах — зарезервировано |
 
 **Errors**
 | Code | Reason |
 |------|--------|
-| 400  | Invalid before/limit params |
-| 401  | Not authenticated |
-| 403  | Not a member of this chat |
-| 404  | Chat not found |
+| 400  | Некорректные before/limit |
+| 403  | Не является членом чата |
+| 404  | Чат не найден |
 
 ---
 
 ## Messages
 
-### POST /api/chats/{id}/messages
+### POST /api/chats/{chatID}/messages
 
-Send a new message to a chat. On success the message is also broadcast via WebSocket (`message.new`).
+Отправляет сообщение. После сохранения в БД публикует WS-событие `message.new` всем членам чата через Redis.
 
 **Auth required:** Yes
 
@@ -358,35 +348,20 @@ Send a new message to a chat. On success the message is also broadcast via WebSo
 }
 ```
 
-**Response 201**
-```json
-{
-  "id": "d5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a",
-  "chat_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "author": {
-    "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-    "username": "alice"
-  },
-  "content": "Hello, Bob!",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:00Z",
-  "deleted_at": null
-}
-```
+**Response 201** — объект сообщения (та же схема, что в списке выше).
 
 **Errors**
 | Code | Reason |
 |------|--------|
-| 400  | Empty content |
-| 401  | Not authenticated |
-| 403  | Not a member of this chat |
-| 404  | Chat not found |
+| 400  | Пустой content |
+| 403  | Не является членом чата |
+| 404  | Чат не найден |
 
 ---
 
-### PATCH /api/messages/{id}
+### PATCH /api/messages/{messageID}
 
-Edit a message. Only the author can edit. Broadcast via WebSocket (`message.edited`).
+Редактирует сообщение. Только автор. Публикует `message.edited`.
 
 **Auth required:** Yes
 
@@ -397,35 +372,20 @@ Edit a message. Only the author can edit. Broadcast via WebSocket (`message.edit
 }
 ```
 
-**Response 200**
-```json
-{
-  "id": "d5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a",
-  "chat_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "author": {
-    "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-    "username": "alice"
-  },
-  "content": "Hello, Bob! (edited)",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:31:00Z",
-  "deleted_at": null
-}
-```
+**Response 200** — обновлённый объект сообщения.
 
 **Errors**
 | Code | Reason |
 |------|--------|
-| 400  | Empty content |
-| 401  | Not authenticated |
-| 403  | Not the author |
-| 404  | Message not found |
+| 400  | Пустой content |
+| 403  | Не является автором |
+| 404  | Сообщение не найдено |
 
 ---
 
-### DELETE /api/messages/{id}
+### DELETE /api/messages/{messageID}
 
-Soft-delete a message. Only the author can delete. Broadcast via WebSocket (`message.deleted`).
+Мягкое удаление. Только автор. Публикует `message.deleted`.
 
 **Auth required:** Yes
 
@@ -434,20 +394,42 @@ Soft-delete a message. Only the author can delete. Broadcast via WebSocket (`mes
 **Errors**
 | Code | Reason |
 |------|--------|
-| 401  | Not authenticated |
-| 403  | Not the author |
-| 404  | Message not found |
+| 403  | Не является автором |
+| 404  | Сообщение не найдено |
 
 ---
 
-## Common Error Format
+## Общий формат ошибок
 
-All errors return JSON:
 ```json
 {
   "error": {
-    "code": "UNAUTHORIZED",
-    "message": "Access token is expired or invalid"
+    "code": "invalid_credentials",
+    "message": "Неверные имя пользователя или пароль"
   }
 }
+```
+
+Ошибки валидации:
+```json
+{
+  "errors": [
+    { "field": "username", "message": "Минимальная длина — 3 символа" }
+  ]
+}
+```
+
+---
+
+## Health check
+
+### GET /api/health
+
+Проверяет соединения с Postgres и Redis.
+
+**Auth required:** No
+
+**Response 200**
+```json
+{ "status": "ok", "postgres": "ok", "redis": "ok" }
 ```

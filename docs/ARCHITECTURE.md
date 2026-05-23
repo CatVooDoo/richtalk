@@ -1,197 +1,276 @@
-# RichTalk — Backend Architecture
+# RichTalk — Architecture
 
-## 1. Слои backend
-
-```
-services/api/
-├── cmd/
-│   └── api/
-│       └── main.go          # точка входа: wire dependencies, start server
-├── internal/
-│   ├── handler/             # HTTP handlers + WS upgrader
-│   │   ├── auth.go
-│   │   ├── chat.go
-│   │   ├── message.go
-│   │   ├── user.go
-│   │   └── ws.go
-│   ├── service/             # бизнес-логика
-│   │   ├── auth.go
-│   │   ├── chat.go
-│   │   ├── message.go
-│   │   └── user.go
-│   ├── repository/          # работа с БД (только SQL, никакой логики)
-│   │   ├── user.go
-│   │   ├── chat.go
-│   │   └── message.go
-│   ├── domain/              # чистые Go-структуры (User, Chat, Message)
-│   │   └── models.go
-│   ├── ws/                  # WebSocket hub + Redis fan-out
-│   │   ├── hub.go
-│   │   └── client.go
-│   ├── middleware/          # JWT validation, logging, CORS
-│   │   └── auth.go
-│   └── config/              # читает env, возвращает typed Config struct
-│       └── config.go
-├── migrations/              # SQL миграции (golang-migrate)
-└── go.mod
-```
-
-### Почему такая структура
-
-**Handler** — знает только HTTP: парсит request, вызывает service, пишет response. Не знает про SQL.
-
-**Service** — вся бизнес-логика: проверяет права ("только автор может редактировать"), вызывает несколько repository-методов в одной транзакции, публикует события в Redis. Не знает про HTTP.
-
-**Repository** — чистый data-access: принимает и возвращает domain-структуры, инкапсулирует SQL. Не знает про бизнес-правила.
-
-Это не полный Clean Architecture с интерфейсами на каждый слой — для MVP это избыточно. Но разделение handler/service/repository даёт: тестируемость service без HTTP, замену БД без правки хендлеров, и чёткое место для каждой новой фичи.
+> Актуально для ветки `feature/frontend`, коммит ~0e14333 (май 2026).
 
 ---
 
-## 2. Auth-флоу
+## 1. Репозиторий: структура сервисов
+
+```
+RichTalk/
+├── services/
+│   ├── api/          # Go backend
+│   └── frontend/     # React frontend
+├── nginx/
+│   └── default.conf  # reverse proxy: /api + /ws → api:8080
+├── docker-compose.yml
+├── .env              # секреты (не в git)
+└── docs/
+```
+
+---
+
+## 2. Backend (`services/api`)
+
+### Структура файлов
+
+```
+services/api/
+├── cmd/api/main.go              # точка входа: читает env, создаёт App
+├── internal/
+│   ├── app/app.go               # DI wiring + HTTP server goroutine
+│   ├── config/config.go         # typed Config struct, читает os.Getenv
+│   ├── model/                   # чистые Go-структуры, ошибки-значения
+│   │   ├── chat.go              # Chat, ChatWithLastMessage, OtherUser, LastMessage, ChatType
+│   │   ├── message.go           # Message, Author, MessageEventPayload, ToEventPayload()
+│   │   └── user.go              # User + sentinel errors (ErrUserNotFound и т.д.)
+│   ├── repository/              # только SQL, никакой логики
+│   │   ├── chat_repo.go         # ListByUserID, CreateDirect, GetByID, CreateNotesChat, GetNotesChat, GetMemberIDs
+│   │   ├── message_repo.go      # Insert, GetByID, List, SoftDelete, Update
+│   │   ├── refresh_repo.go      # Create, FindByToken, Delete (хранит bcrypt-хеш RT)
+│   │   └── user_repo.go         # Create, FindByUsername, FindByID, Search
+│   ├── service/                 # бизнес-логика
+│   │   ├── auth_service.go      # Register (+ создаёт notes-чат), Login, Refresh, Logout
+│   │   ├── chat_service.go      # GetOrCreateDirect, ListChats, GetChat, GetNotesChat
+│   │   ├── jwt_service.go       # Issue, Validate (HS256, 15m TTL)
+│   │   ├── message_service.go   # SendMessage (+ Redis fan-out), EditMessage, DeleteMessage, ListMessages
+│   │   └── user_service.go      # Me, Search
+│   ├── handler/                 # HTTP: парсинг запроса → service → JSON
+│   │   ├── router.go            # chi-роутер, все маршруты
+│   │   ├── auth_handler.go
+│   │   ├── chat_handler.go
+│   │   ├── health_handler.go
+│   │   ├── message_handler.go
+│   │   └── user_handler.go
+│   ├── ws/                      # WebSocket hub
+│   │   ├── handler.go           # ServeWS: проверяет ?token= → upgrade → запускает Client
+│   │   ├── hub.go               # event loop: register/unregister/dispatch/broadcastTyping
+│   │   ├── client.go            # readPump / writePump горутины, ping/pong
+│   │   └── events.go            # ClientEvent, TypingPayload; re-export типов из event/
+│   ├── event/event.go           # Envelope {Type, Payload, TargetUserIDs} + RedisChannel; импорт-нейтральный пакет
+│   ├── middleware/              # Auth (JWT), Logger, Recover
+│   ├── httpx/                   # JSON/error helpers, DecodeValidate
+│   └── migrations/
+│       ├── 000001_init.{up,down}.sql
+│       ├── 000002_users.{up,down}.sql
+│       ├── 000003_chats.{up,down}.sql
+│       ├── 000004_messages.{up,down}.sql
+│       └── 000005_notes_chat.{up,down}.sql  # enum 'notes', attachment columns
+└── go.mod
+```
+
+### Слои и их границы
+
+| Слой | Знает про | Не знает про |
+|------|-----------|--------------|
+| **handler** | HTTP, JSON, path params | SQL, бизнес-правила |
+| **service** | Репозитории, Redis Pub/Sub | HTTP, SQL |
+| **repository** | SQL, pgx | Бизнес-правила, HTTP |
+| **model** | Только Go-типы | Всё остальное |
+
+`event/` — отдельный пакет без зависимостей от `service` или `ws`, чтобы разорвать import cycle: service публикует в Redis, ws читает из Redis — оба импортируют только `event`.
+
+---
+
+## 3. База данных (PostgreSQL)
+
+### Ключевые таблицы
+
+```
+users           id, username (unique), password_hash, created_at
+refresh_tokens  id, user_id, token_hash (bcrypt), expires_at
+chats           id, type (enum: direct|notes), name, created_at, updated_at
+chat_members    chat_id, user_id, joined_at  — многие-ко-многим
+direct_chat_lookup  chat_id, user1_id, user2_id  — уникальный индекс на (user1_id, user2_id)
+messages        id, chat_id, author_id, content, attachment_*, created_at, updated_at, deleted_at
+```
+
+### chat_type enum
+
+- `direct` — чат между двумя пользователями, идентифицируется через `direct_chat_lookup`
+- `notes` — самочат пользователя, создаётся при регистрации (1 участник)
+
+### Мягкое удаление сообщений
+
+`messages.deleted_at TIMESTAMPTZ NULL` — при удалении выставляется timestamp, `content` не трогается. Клиент получает `"deleted": true` и `"content": ""`.
+
+---
+
+## 4. Auth-флоу
 
 ### Токены
 
-| Токен         | Тип     | TTL      | Где хранится |
-|---------------|---------|----------|--------------|
-| access_token  | JWT     | 15 мин   | Только в памяти клиента (не localStorage) |
-| refresh_token | Opaque  | 30 дней  | HttpOnly cookie + хеш в БД |
+| Токен | Тип | TTL | Где хранится |
+|-------|-----|-----|--------------|
+| access_token | JWT (HS256) | 15 мин | In-memory у клиента (Zustand authStore) |
+| refresh_token | Opaque (32 байта, hex) | 30 дней | `localStorage` с ключом `rt`; в БД хранится `bcrypt(token)` |
 
-**Access token** — подписанный JWT (HS256 или RS256), содержит `user_id` и `exp`. Не хранится в БД — проверяется только подписью. Если нужно немедленно отозвать (бан, смена пароля) — требует короткого TTL или blocklist в Redis.
-
-**Refresh token** — криптографически случайная строка (32 байта, base64url). В БД хранится только `bcrypt(token)` — так утечка таблицы `refresh_tokens` не даёт злоумышленнику использовать токены. При каждом `/auth/refresh` старый токен удаляется, выдаётся новый (rotation). Обнаружение повторного использования (если кто-то украл и ротировал до владельца) — будущее расширение.
+**Почему не HttpOnly cookie для RT:** В текущей реализации RT передаётся в теле JSON-запроса и хранится в `localStorage`. HttpOnly cookie — будущее улучшение безопасности.
 
 ### Флоу
 
 ```
-[Login] ──▶ issue access_token (15m) + refresh_token (30d)
-                │
-                ▼
-         access_token в памяти клиента
-         refresh_token в HttpOnly cookie
-                │
-         через 15m access_token истёк
-                │
-                ▼
-[Refresh] ─POST /auth/refresh──▶ новый access_token + ротированный refresh_token
-                │
-                ▼
-         при logout ──▶ DELETE refresh_token из БД
+[Register/Login] ──▶ { access_token, refresh_token, user }
+                          │
+                 access_token → Zustand (память)
+                 refresh_token → localStorage['rt']
+                          │
+               через 15m: любой API-запрос возвращает 401
+                          │
+                 Axios interceptor: POST /api/auth/refresh { refresh_token }
+                          │
+                 новый access_token + ротированный refresh_token
+                          │
+               повторяем оригинальный запрос с новым токеном
+                          │
+          [Logout]: POST /api/auth/logout { refresh_token } → удаляет RT из БД
 ```
 
-### JWT payload
+### Параллельные 401
+
+Axios interceptor ставит новые запросы в очередь на время обновления токена — `isRefreshing` флаг + Promise-очередь. Все накопившиеся запросы переотправляются с одним новым access_token.
+
+---
+
+## 5. WebSocket и доставка событий
+
+### Аутентификация WS
+
+JWT передаётся **в query-параметре** `?token=<access_token>` ещё до HTTP Upgrade.  
+Сервер проверяет токен до апгрейда и возвращает HTTP 401 при ошибке — это позволяет вернуть нормальный HTTP-статус, после Upgrade это уже невозможно.
+
+```
+GET /ws?token=<jwt> HTTP/1.1
+Upgrade: websocket
+```
+
+### Hub
+
+Hub — единый goroutine, владеющий `map[userID][]*Client`. Все мутации (register/unregister/incoming) идут через каналы — никаких mutex.
+
+```
+    register chan *Client
+    unregister chan *Client
+    incoming chan incomingMessage   (typing events от клиентов)
+```
+
+### Redis fan-out
+
+**Один глобальный канал** `richtalk:events` (не per-chat).  
+Конверт:
 
 ```json
 {
-  "sub": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "iat": 1705312200,
-  "exp": 1705313100
+  "type": "message.new",
+  "payload": { ... },
+  "target_user_ids": ["uuid1", "uuid2"]
 }
 ```
 
-Минимальный payload — только `sub` (user_id) + стандартные claims. Роли и права — будущее расширение.
+`TargetUserIDs` заполняется при публикации (по `chat_members`). Hub каждого API-инстанса подписан на `richtalk:events` и доставляет только тем `userID`, которые есть у него в памяти. Горизонтальное масштабирование: N инстансов, один Redis-канал, никакой координации между инстансами.
+
+### Медленные клиенты
+
+Если канал `Client.send` (буфер 256 сообщений) переполнен — соединение закрывается немедленно, сообщение дропается.
 
 ---
 
-## 3. Доставка сообщений в реальном времени
-
-### Схема
+## 6. Frontend (`services/frontend`)
 
 ```
-  ┌─────────────────────────────────────────────────────────────────┐
-  │                         Nginx                                    │
-  │          /api/* ──▶ api:8080     /ws ──▶ api:8080 (WS upgrade)  │
-  └──────────────────────────┬──────────────────┬────────────────────┘
-                             │                  │
-                    HTTP     │                  │ WebSocket
-                             ▼                  ▼
-  ┌──────────────────────────────────────────────────────────────────┐
-  │                      API Instance 1                              │
-  │                                                                  │
-  │  POST /api/chats/{id}/messages                                   │
-  │         │                                                        │
-  │  [1] INSERT message INTO postgres                                │
-  │         │                                                        │
-  │  [2] PUBLISH "chat:{id}" → Redis ──────────────────────────────▶│──┐
-  │         │                                                        │  │
-  │  [3] 201 Created ──▶ Client A                                   │  │
-  │                                                                  │  │
-  │  WS Hub (goroutine)                                              │  │
-  │  ◀── SUBSCRIBE "chat:{id}" (own publish received back) ──────────│◀─┘
-  │         │                                                        │
-  │  [4] find local WS clients in chat:{id}                         │
-  │         │                                                        │
-  │  [5] write message.new to Client A (other device / same chat)   │
-  └──────────────────────────────────────────────────────────────────┘
-
-  ┌──────────────────────────────────────────────────────────────────┐
-  │                      API Instance 2                              │
-  │                                                                  │
-  │  WS Hub (goroutine)                                              │
-  │  ◀── SUBSCRIBE "chat:{id}" ──────────────────────────────────────│◀── Redis
-  │         │                                                        │
-  │  [4] find local WS clients in chat:{id}                         │
-  │         │                                                        │
-  │  [5] write message.new to Client B                               │
-  └──────────────────────────────────────────────────────────────────┘
+services/frontend/src/
+├── api/
+│   ├── client.ts     # axios instance, interceptors (401 → refresh → retry)
+│   ├── auth.ts       # register, login, logout (plain axios, без auth header)
+│   ├── chats.ts      # getChats, createDirect, getNotesChat, getMessages, sendMessage, editMessage, deleteMessage
+│   └── users.ts      # getMe, searchUsers
+├── store/
+│   ├── authStore.ts  # user, accessToken, isAuthenticated; setAuth, setUser, logout
+│   ├── chatStore.ts  # chats[], activeChat, messages[chatId], hasMore[chatId], typingUsers[chatId]
+│   └── wsStore.ts    # connected, send(event)
+├── hooks/
+│   ├── useWebSocket.ts  # connect/reconnect (max 5 retries, 3s delay), dispatch WS events
+│   └── useAuth.ts       # signOut()
+├── components/
+│   ├── Avatar/       # инициалы + hash-based градиент по username
+│   ├── Button/       # variant: primary | ghost | icon
+│   ├── Input/
+│   ├── GlassPanel/
+│   └── PrivateRoute/ # проверяет RT в localStorage → getMe() → redirect /login
+├── pages/
+│   ├── Auth/         # LoginPage, RegisterPage — общий Auth.module.css
+│   └── Messenger/
+│       ├── Sidebar/  # список чатов, debounced поиск (300ms), unread badge
+│       └── ChatArea/ # day dividers, infinite scroll вверх, пузыри, context menu, edit bar, typing indicator
+├── index.css         # глобальные классы: .glass, .glass-strong, scrollbar
+└── vite-env.d.ts     # /// <reference types="vite/client" /> — типы для *.module.css
 ```
 
-### Детали реализации Hub
+### Дизайн-система: Liquid Glass
 
-- Каждый API-инстанс держит in-memory `Hub`: `map[chatID][]WSClient`
-- При подключении клиента: загрузить список его чатов → добавить его в Hub → подписаться на `chat:{id}` в Redis для всех его чатов, где ещё не подписаны
-- При отключении клиента: удалить из Hub → отписаться от каналов, где больше нет локальных клиентов
-- Одна горутина на Redis SUBSCRIBE (pub/sub listener) — читает сообщения и dispatches в Hub
-- Отправка клиенту: горутина-writer на каждое WS-соединение с буферизованным каналом; если буфер заполнен — соединение считается медленным и закрывается
+- Фон: `linear-gradient(135deg, #1a0533, #0d1b4b, #0a2a6e)`
+- `.glass` / `.glass-strong` — `backdrop-filter: blur + saturate` + полупрозрачный белый border
+- Акцентный цвет: `#a855f7` (purple-500)
+- Радиусы: каждый компонент задаёт свой `border-radius`, глобальные `.glass`-классы его **не** задают (иначе конфликт)
 
-### Typing-события
+### chatStore: per-chat storage
 
-Не сохраняются в БД. Клиент → Instance → Redis PUBLISH → все инстансы → другие участники чата. Если Redis недоступен, typing просто не приходит — это приемлемо для ephemeral-события.
+```ts
+messages:    Record<chatId, Message[]>   // oldest first
+hasMore:     Record<chatId, boolean>
+typingUsers: Record<chatId, string[]>    // userIDs, кто сейчас печатает
+```
 
----
-
-## 4. Как это будет расти
-
-### Групповые чаты
-
-Добавить `'group'` в enum `chat_type`. Таблицы `chats` и `chat_members` уже поддерживают N участников — никаких изменений схемы. `direct_chat_lookup` используется только для `type='direct'`. Нужно добавить: поле `role` в `chat_members` (owner/admin/member), поле `name` в `chats` (уже есть).
-
-### Файлы и медиа
-
-Добавить `message_type ENUM ('text', 'image', 'file')` в `messages`. Добавить таблицу `message_attachments (id, message_id, storage_key, mime_type, size)`. Сами файлы — S3-совместимое хранилище (Minio для self-host). Схема сообщений не ломается.
-
-### Реакции
-
-Новая таблица `message_reactions (message_id, user_id, emoji, created_at)` с PRIMARY KEY (message_id, user_id, emoji). Не требует изменений в `messages`.
-
-### Reply / Forward
-
-`messages` получит `reply_to_id UUID NULL REFERENCES messages(id)` и `forwarded_from_id UUID NULL`. Additive migration — нет breaking changes.
-
-### Online-статусы
-
-Redis Hash: `user:online:{user_id}` с TTL. Обновляется при каждом WS ping. Не требует изменений в БД.
-
-### Масштабирование
-
-Сейчас: 1 инстанс API. Redis Pub/Sub уже заложен — горизонтальное масштабирование API работает без дополнительной работы. Следующий шаг: read-реплика Postgres для тяжёлых SELECT (история сообщений).
+`addMessage` дедуплицирует по ID — HTTP-ответ `sendMessage` и WS `message.new` доставляют одно и то же сообщение; в store попадает только одно.
 
 ---
 
-## 5. Что сознательно НЕ делаем в MVP
+## 7. Nginx
 
-| Фича | Причина |
-|------|---------|
-| End-to-end шифрование | Требует key exchange protocol (Signal), кардинально усложняет архитектуру |
-| Групповые и публичные чаты | Вторая итерация — схема БД уже готова |
-| Файлы и медиа | Требует S3 + CDN + upload flow |
-| Реакции | UI-фича, не блокер |
-| Reply / Forward | UI-фича, не блокер |
-| Online-статусы (last seen) | Privacy concerns + дополнительная нагрузка на Redis |
-| Push-уведомления | Требует APNs/FCM интеграцию и мобильные клиенты |
-| Звонки (audio/video) | WebRTC — отдельный проект |
-| Аватарки и профиль | Требует файловое хранилище |
-| Чтение сообщений (read receipts) | Дополнительная таблица + события — вторая итерация |
-| Поиск по тексту сообщений | Full-text search (pg tsvector или Meilisearch) — после MVP |
-| Rate limiting | Нужен, но настраивается на уровне Nginx/middleware — не в схеме |
-| Email-верификация | Требует SMTP — пропускаем для MVP |
+```
+/api/* → http://api:8080      (HTTP reverse proxy)
+/ws    → ws://api:8080/ws     (WebSocket proxy, с заголовками Upgrade)
+/      → frontend:5173        (Vite dev server в dev-режиме)
+```
+
+---
+
+## 8. Docker Compose
+
+| Сервис | Образ | Порт |
+|--------|-------|------|
+| postgres | postgres:16-alpine | 5432 (внутренний) |
+| redis | redis:7-alpine | 6379 (внутренний) |
+| api | golang:1.23 + air | 8080 (внутренний) |
+| frontend | node:20-alpine | 5173 (внутренний) |
+| nginx | nginx:1.27-alpine | **80 (внешний)** |
+
+API-контейнер использует `air` для hot-reload в dev. Миграции применяются при старте API (`golang-migrate`).
+
+---
+
+## 9. Что намеренно не в MVP
+
+| Фича | Почему отложена |
+|------|----------------|
+| Групповые и публичные чаты | Схема БД готова (N членов, enum); нужен UI + роли |
+| Файлы и медиа | Attachment-колонки в БД есть; нужен S3 + upload flow |
+| HttpOnly cookie для RT | Текущий вариант (localStorage) проще; cookie — следующий шаг |
+| Read receipts | Дополнительная таблица + WS-событие |
+| Online-статусы | Redis Hash с TTL; privacy-решение требует обсуждения |
+| Реакции, Reply, Forward | UI-фичи, не блокер |
+| Push-уведомления | Требует APNs/FCM + мобильный клиент |
+| Full-text search | pg tsvector или Meilisearch — после MVP |
+| Rate limiting | Nginx/middleware уровень, не в схеме сейчас |
+| Email-верификация | Требует SMTP |
+| E2E-шифрование | Signal Protocol — кардинально другая архитектура |

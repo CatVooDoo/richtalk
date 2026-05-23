@@ -1,67 +1,50 @@
 # RichTalk — WebSocket Protocol
 
-## Connection
+## Подключение и аутентификация
 
-**URL:** `ws://localhost/ws`
+**URL:** `ws://localhost/ws?token=<access_token>`
 
-### Authentication
+JWT передаётся в **query-параметре `token`** ещё до HTTP Upgrade.
 
-JWT is sent as the **first message** after the TCP/WebSocket handshake, not in the URL query string.
+### Почему query-param, а не первое сообщение?
 
-**Why first message, not query param?**  
-Query params appear in server access logs, browser history, and Nginx `$request_uri` logs — leaking the token to anyone with log access. The WebSocket handshake HTTP request is logged by Nginx; a token in the URL would be logged in plaintext. A first-message auth keeps the token inside the encrypted WebSocket payload and never touches the URL.
+Токен проверяется **до** апгрейда соединения. Это позволяет вернуть нормальный HTTP 401 при неверном/истёкшем токене — после того как Upgrade выполнен, отправить HTTP-статус уже невозможно. Альтернатива "первым сообщением" усложняет обработку ошибок и требует таймаут-логики на сервере.
 
-**Timeout:** The server closes the connection with code `4001` if an auth message is not received within **5 seconds** of the handshake.
+> В dev-среде токен попадает в access-логи Nginx. В production рекомендуется переключиться на cookie или добавить Nginx-правило для маскировки query.
 
-### Auth handshake
+### Флоу соединения (frontend)
 
-After connecting, the client must send:
-
-```json
-{
-  "type": "auth",
-  "payload": {
-    "access_token": "<jwt>"
-  }
-}
+```
+1. Пользователь залогинен → access_token в authStore (Zustand)
+2. useWebSocket hook строит URL: ws://host/ws?token=<access_token>
+3. new WebSocket(url)
+4. ws.onopen → connected = true, retries = 0
+5. ws.onclose(code !== 4001) → retry через 3s, макс 5 попыток
+6. ws.onclose(code === 4001) → не переподключаться (невалидный токен)
 ```
 
-If auth succeeds, the server responds:
+### HTTP-ответы при ошибках до Upgrade
 
-```json
-{
-  "type": "auth.ok",
-  "payload": {
-    "user_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-  }
-}
-```
+| HTTP status | Причина |
+|-------------|---------|
+| 401 | Параметр `token` отсутствует |
+| 401 | Токен невалиден или истёк |
 
-If auth fails, the server sends and closes the connection:
+После успешного Upgrade ошибки передаются через WebSocket Close frames.
 
-```json
-{
-  "type": "auth.error",
-  "payload": {
-    "message": "Token expired or invalid"
-  }
-}
-```
+### WebSocket Close codes
 
-### Close codes
-
-| Code | Reason |
-|------|--------|
-| 4001 | Auth timeout — no auth message received |
-| 4002 | Invalid or expired token |
-| 4003 | Malformed message |
-| 1000 | Normal closure (client-initiated) |
+| Code | Причина |
+|------|---------|
+| 4001 | Невалидный/истёкший токен (фактически: HTTP 401 до Upgrade → клиент трактует как 4001 и не переподключается) |
+| 1000 | Нормальное закрытие (клиент) |
+| 1001 | Going Away |
 
 ---
 
-## Message Format
+## Формат сообщений
 
-All messages (both directions) use the same envelope:
+Все сообщения в обоих направлениях используют одну обёртку:
 
 ```json
 {
@@ -72,11 +55,11 @@ All messages (both directions) use the same envelope:
 
 ---
 
-## Client → Server Events
+## Client → Server
 
 ### `typing.start`
 
-User started typing in a chat.
+Пользователь начал печатать в чате.
 
 ```json
 {
@@ -87,14 +70,13 @@ User started typing in a chat.
 }
 ```
 
-Server broadcasts `typing.start` to other members of the chat (not back to sender).  
-No response to sender.
+Сервер публикует событие в Redis → все инстансы → другие участники чата (отправителю не возвращается). Ответа не ждём.
 
 ---
 
 ### `typing.stop`
 
-User stopped typing.
+Пользователь прекратил печатать (автоматически через 3s тишины на клиенте).
 
 ```json
 {
@@ -107,11 +89,13 @@ User stopped typing.
 
 ---
 
-## Server → Client Events
+## Server → Client
 
 ### `message.new`
 
-A new message was sent to a chat the user is a member of.
+Новое сообщение в любом чате пользователя.  
+**Отправляется в том числе отправителю** — для синхронизации между устройствами.  
+Payload идентичен HTTP-ответу `POST /api/chats/{id}/messages`.
 
 ```json
 {
@@ -123,20 +107,21 @@ A new message was sent to a chat the user is a member of.
       "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
       "username": "alice"
     },
-    "content": "Hello, Bob!",
+    "content": "Hello!",
+    "deleted": false,
     "created_at": "2024-01-15T10:30:00Z",
     "updated_at": "2024-01-15T10:30:00Z"
   }
 }
 ```
 
-> Note: also sent to the author's own connection so they get confirmation on other devices.
+> **Дедупликация на клиенте:** HTTP-ответ `sendMessage` и `message.new` от WS приходят оба. `chatStore.addMessage` пропускает сообщение если ID уже есть — в store попадает только одно.
 
 ---
 
 ### `message.edited`
 
-A message in a chat the user is a member of was edited.
+Сообщение отредактировано. Payload идентичен HTTP `PATCH /api/messages/{id}`.
 
 ```json
 {
@@ -144,7 +129,13 @@ A message in a chat the user is a member of was edited.
   "payload": {
     "id": "d5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a",
     "chat_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "content": "Hello, Bob! (edited)",
+    "author": {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "username": "alice"
+    },
+    "content": "Hello! (edited)",
+    "deleted": false,
+    "created_at": "2024-01-15T10:30:00Z",
     "updated_at": "2024-01-15T10:31:00Z"
   }
 }
@@ -154,7 +145,7 @@ A message in a chat the user is a member of was edited.
 
 ### `message.deleted`
 
-A message was soft-deleted. Client should replace the content with a "сообщение удалено" placeholder.
+Сообщение мягко удалено. Клиент заменяет контент плейсхолдером.
 
 ```json
 {
@@ -162,7 +153,8 @@ A message was soft-deleted. Client should replace the content with a "сообщ
   "payload": {
     "id": "d5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a",
     "chat_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "deleted_at": "2024-01-15T10:32:00Z"
+    "deleted": true,
+    "content": ""
   }
 }
 ```
@@ -171,20 +163,20 @@ A message was soft-deleted. Client should replace the content with a "сообщ
 
 ### `typing.start` (broadcast)
 
-Another member of a shared chat started typing.
+Другой участник чата начал печатать.  
+Payload содержит только `user_id` (не объект с username).
 
 ```json
 {
   "type": "typing.start",
   "payload": {
     "chat_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "user": {
-      "id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e",
-      "username": "bob"
-    }
+    "user_id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e"
   }
 }
 ```
+
+Клиент (chatStore) добавляет `user_id` в `typingUsers[chat_id]`. Sidebar показывает "печатает..." в подзаголовке активного чата, ChatArea показывает анимированный индикатор (3 точки).
 
 ---
 
@@ -195,57 +187,82 @@ Another member of a shared chat started typing.
   "type": "typing.stop",
   "payload": {
     "chat_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "user": {
-      "id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e",
-      "username": "bob"
-    }
+    "user_id": "b3d1c2e4-6f8a-4b2c-9d0e-1f2a3b4c5d6e"
   }
 }
 ```
 
 ---
 
-## Redis Pub/Sub — Multi-instance Fan-out
+## Redis Pub/Sub — архитектура fan-out
 
-### Problem
+### Один глобальный канал
 
-When multiple API instances run behind Nginx (or during scaling), Client A may connect to Instance 1 while Client B is connected to Instance 2. A WS event published by Instance 1 must also reach Client B on Instance 2.
+Канал: **`richtalk:events`** (не per-chat, один на весь кластер).
 
-### Solution: per-chat Redis channels
+```go
+// event/event.go
+const RedisChannel = "richtalk:events"
 
-Each API instance maintains a set of goroutines that subscribe to Redis channels for every chat whose members are currently connected to that instance.
-
-**Channel naming:** `chat:{chat_id}`  
-Example: `chat:a1b2c3d4-e5f6-7890-abcd-ef1234567890`
-
-### Flow for `message.new`
-
-```
-Client A                API Instance 1           Redis Pub/Sub        API Instance 2          Client B
-   │                          │                        │                     │                    │
-   │── POST /api/chats/{id}/messages ──────────────────│                     │                    │
-   │                          │                        │                     │                    │
-   │                   [INSERT INTO messages]          │                     │                    │
-   │                          │                        │                     │                    │
-   │                          │── PUBLISH chat:{id} ──▶│                     │                    │
-   │                          │                        │                     │                    │
-   │◀─── 201 Created ─────────│                        │─── message ────────▶│                    │
-   │                          │                        │                     │                    │
-   │                          │◀──────── message ──────│   (Instance 1 also  │                    │
-   │◀─── WS: message.new ─────│           (own sub)    │   receives its own  │── WS: message.new ▶│
-   │                          │                        │   publish)          │                    │
+type Envelope struct {
+    Type          Type            `json:"type"`
+    Payload       json.RawMessage `json:"payload"`
+    TargetUserIDs []string        `json:"target_user_ids"`
+}
 ```
 
-### Subscription lifecycle
+`TargetUserIDs` вычисляется при публикации по таблице `chat_members`. Hub каждого API-инстанса подписан на единый канал и доставляет только тем пользователям, у которых есть активное соединение **на этом инстансе**.
 
-- When a user's WS connection is established (after auth), the instance checks which chats that user belongs to and subscribes to `chat:{id}` for each.
-- When a user disconnects, the instance unsubscribes from channels where no other local client remains.
-- On receiving a publish on `chat:{id}`, the instance looks up all locally connected WS clients that are members of that chat and writes the event to their connections.
+### Hub: map[userID][]*Client
 
-### Typing events
+```go
+clients map[string][]*Client  // userID → slice (несколько вкладок)
+```
 
-Typing events (`typing.start` / `typing.stop`) are **not persisted to the DB** — they are published directly to Redis and fan out to other members. They are transient: no delivery guarantee, no replay.
+Один userID → несколько соединений. Событие доставляется всем соединениям этого пользователя.
 
-### Future: at-least-once delivery
+### Флоу `message.new`
 
-When offline delivery or push notifications are needed, a message queue (e.g., Redis Streams or NATS JetStream) can replace Pub/Sub for `message.new` while keeping Pub/Sub for ephemeral typing events.
+```
+Client A                   API Instance 1                Redis               API Instance 2          Client B
+   │                             │                          │                        │                   │
+   │─ POST /chats/{id}/messages ─▶│                          │                        │                   │
+   │                             │                          │                        │                   │
+   │                      [INSERT INTO messages]             │                        │                   │
+   │                             │                          │                        │                   │
+   │                             │─ PUBLISH richtalk:events ▶│                        │                   │
+   │                             │   {type, payload,         │                        │                   │
+   │                             │    target_user_ids: [A,B]}│                        │                   │
+   │◀─ 201 Created ──────────────│                          │                        │                   │
+   │                             │                          │─── envelope ──────────▶│                   │
+   │                             │◀────── own envelope ─────│   (Instance 2 delivers │                   │
+   │◀── WS: message.new ─────────│          (delivers to A) │    to B if connected)  │── WS: message.new ▶│
+```
+
+### Флоу `typing.start`
+
+```
+Client A ─ typing.start ──▶ Hub (Instance 1) ─ broadcastTyping()
+                                  │
+                           GetMemberIDs(chat_id)   [DB call в горутине]
+                                  │
+                           PUBLISH richtalk:events {type: "typing.start",
+                                                    payload: {chat_id, user_id: A},
+                                                    target_user_ids: [B, C, ...]}
+                                  │
+                  Redis ──────────▶ Instance 1 Hub + Instance 2 Hub + ...
+                                         │                  │
+                                  deliver to B        deliver to C
+```
+
+Typing-события не сохраняются в БД. Нет гарантии доставки — это приемлемо для ephemeral-событий.
+
+### Масштабирование
+
+N инстансов API — один Redis-канал. Никакой координации между инстансами не нужно. Следующий шаг для надёжной доставки `message.new` — Redis Streams вместо Pub/Sub (at-least-once с replay); typing остаётся на Pub/Sub.
+
+---
+
+## Ping / Pong
+
+Сервер отправляет WebSocket Ping каждые ~54 секунды (`pingPeriod = pongWait * 9/10`, `pongWait = 60s`). Если Pong не пришёл в течение 60s — соединение закрывается. Браузер отвечает Pong автоматически.
