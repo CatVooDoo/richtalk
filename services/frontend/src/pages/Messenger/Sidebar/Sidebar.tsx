@@ -124,11 +124,11 @@ export default function Sidebar() {
         <span className={styles.title}>RichTalk</span>
         <div className={styles.headerActions}>
           {searchOpen ? (
-            <Button variant="ghost" onClick={closeSearch} aria-label="Закрыть поиск">
+            <Button variant="icon" onClick={closeSearch} aria-label="Закрыть поиск">
               <IconX size={16} stroke={1.8} />
             </Button>
           ) : (
-            <Button variant="ghost" onClick={() => setSearchOpen(true)} aria-label="Поиск">
+            <Button variant="icon" onClick={() => setSearchOpen(true)} aria-label="Поиск">
               <IconSearch size={16} stroke={1.8} />
             </Button>
           )}
@@ -223,7 +223,7 @@ export default function Sidebar() {
             <Avatar username={user?.username ?? '?'} size={30} />
             <span className={styles.username}>{user?.username}</span>
           </div>
-          <Button variant="ghost" title="Выйти" onClick={signOut} aria-label="Выйти">
+          <Button variant="icon" title="Выйти" onClick={signOut} aria-label="Выйти">
             <IconLogout size={15} stroke={1.8} />
           </Button>
         </div>

@@ -32,6 +32,7 @@ body {
   backdrop-filter: blur(24px) saturate(1.8);
   -webkit-backdrop-filter: blur(24px) saturate(1.8);
   border: 1px solid rgba(255, 255, 255, 0.18);
+  /* border-radius intentionally omitted — each consumer sets its own */
 }
 
 .glass-strong {
@@ -39,6 +40,7 @@ body {
   backdrop-filter: blur(40px) saturate(2.2);
   -webkit-backdrop-filter: blur(40px) saturate(2.2);
   border: 1px solid rgba(255, 255, 255, 0.25);
+  /* border-radius intentionally omitted — each consumer sets its own */
 }
 
 /* thin scrollbar */

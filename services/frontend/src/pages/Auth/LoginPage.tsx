@@ -42,8 +42,10 @@ export default function LoginPage() {
       <div className={styles.orb3} />
 
       <div className={`${styles.card} glass-strong`}>
-        <div className={styles.logo}>RichTalk</div>
-        <p className={styles.subtitle}>Войдите в аккаунт</p>
+        <div className={styles.cardHeader}>
+          <div className={styles.logo}>RichTalk</div>
+          <p className={styles.subtitle}>Войдите в аккаунт</p>
+        </div>
 
         <form className={styles.form} onSubmit={handleSubmit} noValidate>
           <Input

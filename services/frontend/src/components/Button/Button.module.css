@@ -34,3 +34,25 @@
 
 .ghost:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
 .ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Minimal icon button — no background, no border, just a hover glow */
+.icon {
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.icon:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+}
+.icon:disabled { opacity: 0.3; cursor: not-allowed; }

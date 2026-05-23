@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import styles from './Button.module.css'
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'ghost'
+  variant?: 'primary' | 'ghost' | 'icon'
   children: ReactNode
 }
 

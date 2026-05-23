@@ -49,8 +49,10 @@ export default function RegisterPage() {
       <div className={styles.orb3} />
 
       <div className={`${styles.card} glass-strong`}>
-        <div className={styles.logo}>RichTalk</div>
-        <p className={styles.subtitle}>Создайте аккаунт</p>
+        <div className={styles.cardHeader}>
+          <div className={styles.logo}>RichTalk</div>
+          <p className={styles.subtitle}>Создайте аккаунт</p>
+        </div>
 
         <form className={styles.form} onSubmit={handleSubmit} noValidate>
           <Input

@@ -3,7 +3,7 @@
   backdrop-filter: blur(24px) saturate(1.8);
   -webkit-backdrop-filter: blur(24px) saturate(1.8);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: var(--radius-card, 16px);
+  border-radius: var(--radius-card, 16px); /* GlassPanel component sets its own radius */
 }
 
 .strong {

@@ -352,7 +352,7 @@ export default function ChatArea() {
 
       {/* Edit bar */}
       {editing && (
-        <div className={`${styles.editBar} glass`}>
+        <div className={styles.editBar}>
           <div className={styles.editBarInfo}>
             <IconPencil size={14} className={styles.editBarIcon} />
             <span className={styles.editBarText}>{editing.content}</span>
@@ -366,7 +366,7 @@ export default function ChatArea() {
       {/* Input */}
       <div className={styles.inputRow}>
         <Button
-          variant="ghost"
+          variant="icon"
           className={styles.attachBtn}
           onClick={() => setToastMsg('Загрузка файлов — скоро!')}
           aria-label="Прикрепить файл"
@@ -387,7 +387,7 @@ export default function ChatArea() {
         </div>
 
         <Button
-          variant="ghost"
+          variant="icon"
           className={`${styles.sendBtn} ${text.trim() ? styles.sendBtnActive : ''}`}
           disabled={!text.trim() || sending}
           onClick={handleSend}

@@ -52,6 +52,12 @@
   gap: 24px;
 }
 
+.cardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .logo {
   font-size: 30px;
   font-weight: 700;
@@ -67,7 +73,6 @@
   font-size: 14px;
   color: rgba(255, 255, 255, 0.45);
   text-align: center;
-  margin-top: -16px;
 }
 
 .form {
