@@ -97,13 +97,17 @@ func (h *MessageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // --- mapping helpers ---
 
 type messageResponse struct {
-	ID        string         `json:"id"`
-	ChatID    string         `json:"chat_id"`
-	Author    authorResponse `json:"author"`
-	Content   string         `json:"content"` // empty when deleted
-	Deleted   bool           `json:"deleted"`
-	CreatedAt string         `json:"created_at"`
-	UpdatedAt string         `json:"updated_at"`
+	ID             string         `json:"id"`
+	ChatID         string         `json:"chat_id"`
+	Author         authorResponse `json:"author"`
+	Content        string         `json:"content"` // empty when deleted
+	Deleted        bool           `json:"deleted"`
+	AttachmentType *string        `json:"attachment_type,omitempty"`
+	AttachmentURL  *string        `json:"attachment_url,omitempty"`
+	AttachmentName *string        `json:"attachment_name,omitempty"`
+	AttachmentSize *int64         `json:"attachment_size,omitempty"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
 }
 
 type authorResponse struct {
@@ -123,10 +127,14 @@ func mapMessage(m *model.Message) messageResponse {
 			ID:       m.Author.ID.String(),
 			Username: m.Author.Username,
 		},
-		Content:   content,
-		Deleted:   m.IsDeleted(),
-		CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: m.UpdatedAt.UTC().Format(time.RFC3339),
+		Content:        content,
+		Deleted:        m.IsDeleted(),
+		AttachmentType: m.AttachmentType,
+		AttachmentURL:  m.AttachmentURL,
+		AttachmentName: m.AttachmentName,
+		AttachmentSize: m.AttachmentSize,
+		CreatedAt:      m.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:      m.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

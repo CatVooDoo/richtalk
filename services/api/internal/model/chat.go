@@ -12,6 +12,7 @@ const (
 	ChatTypeDirect  ChatType = "direct"
 	ChatTypeGroup   ChatType = "group"
 	ChatTypeChannel ChatType = "channel"
+	ChatTypeNotes   ChatType = "notes"
 )
 
 type Chat struct {

@@ -14,14 +14,12 @@ function buildWsUrl(token: string): string {
 
 export function useWebSocket() {
   const { isAuthenticated, accessToken } = useAuthStore()
-  const { activeChat, addMessage, updateMessage, markMessageDeleted, setTyping } = useChatStore()
+  const { addMessage, updateMessage, markDeleted, markDeletedById, bumpChat, setTyping } =
+    useChatStore()
   const { _setConnected, _setSend } = useWsStore()
 
   const wsRef = useRef<WebSocket | null>(null)
   const retriesRef = useRef(0)
-  const activeChatRef = useRef(activeChat)
-
-  useEffect(() => { activeChatRef.current = activeChat }, [activeChat])
 
   const sendFn = useCallback((event: WsClientEvent) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -45,7 +43,7 @@ export function useWebSocket() {
 
     ws.onclose = (ev) => {
       _setConnected(false)
-      if (ev.code === 4001) return // invalid token — no reconnect
+      if (ev.code === 4001) return
       if (retriesRef.current < MAX_RETRIES) {
         retriesRef.current += 1
         setTimeout(connect, RECONNECT_DELAY_MS)
@@ -57,31 +55,33 @@ export function useWebSocket() {
     ws.onmessage = (ev: MessageEvent<string>) => {
       try {
         const msg = JSON.parse(ev.data) as { type: string; payload: unknown }
-        const activeChatId = activeChatRef.current?.id
 
         switch (msg.type) {
           case 'message.new': {
             const m = msg.payload as Message
-            if (m.chat_id === activeChatId) addMessage(m)
+            addMessage(m.chat_id, m)
+            bumpChat(m.chat_id, m)
             break
           }
           case 'message.edited': {
-            updateMessage(msg.payload as Message)
+            const m = msg.payload as Message
+            updateMessage(m.chat_id, m)
             break
           }
           case 'message.deleted': {
-            const p = msg.payload as { id: string }
-            markMessageDeleted(p.id)
+            const p = msg.payload as { id: string; chat_id?: string }
+            if (p.chat_id) markDeleted(p.chat_id, p.id)
+            else markDeletedById(p.id)
             break
           }
           case 'typing.start': {
             const p = msg.payload as { chat_id: string; user_id: string }
-            if (p.chat_id === activeChatId) setTyping(p.user_id, true)
+            setTyping(p.chat_id, p.user_id, true)
             break
           }
           case 'typing.stop': {
             const p = msg.payload as { chat_id: string; user_id: string }
-            if (p.chat_id === activeChatId) setTyping(p.user_id, false)
+            setTyping(p.chat_id, p.user_id, false)
             break
           }
         }
@@ -89,7 +89,7 @@ export function useWebSocket() {
         // ignore malformed messages
       }
     }
-  }, [_setConnected, addMessage, updateMessage, markMessageDeleted, setTyping])
+  }, [_setConnected, addMessage, updateMessage, markDeleted, markDeletedById, bumpChat, setTyping])
 
   useEffect(() => {
     if (!isAuthenticated || !accessToken) return

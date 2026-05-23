@@ -54,7 +54,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	messageRepo := repository.NewMessageRepo(pgPool)
 
 	jwtSvc := service.NewJWTService(cfg.JWTSecret, cfg.AccessTokenTTL)
-	authSvc := service.NewAuthService(userRepo, refreshRepo, jwtSvc, cfg.RefreshTokenTTL, log)
+	authSvc := service.NewAuthService(userRepo, refreshRepo, chatRepo, jwtSvc, cfg.RefreshTokenTTL, log)
 	userSvc := service.NewUserService(userRepo, log)
 	chatSvc := service.NewChatService(chatRepo, log)
 	messageSvc := service.NewMessageService(messageRepo, chatRepo, rdb, log)

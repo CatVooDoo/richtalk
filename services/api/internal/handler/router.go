@@ -61,6 +61,7 @@ func NewRouter(d Deps) http.Handler {
 		// Chats
 		r.Get("/chats", chatH.List)
 		r.Post("/chats/direct", chatH.CreateDirect)
+		r.Get("/chats/notes", chatH.GetNotes) // must be before /{chatID}
 		r.Get("/chats/{chatID}", chatH.Get)
 		r.Get("/chats/{chatID}/messages", chatH.ListMessages)
 

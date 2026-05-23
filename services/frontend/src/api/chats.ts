@@ -15,7 +15,7 @@ export interface LastMessage {
 
 export interface Chat {
   id: string
-  type: 'direct' | 'group' | 'channel'
+  type: 'direct' | 'group' | 'channel' | 'notes'
   name?: string
   other_user?: OtherUser
   last_message?: LastMessage
@@ -33,6 +33,10 @@ export interface Message {
   author: MessageAuthor
   content: string
   deleted: boolean
+  attachment_type?: 'image' | 'file' | null
+  attachment_url?: string | null
+  attachment_name?: string | null
+  attachment_size?: number | null
   created_at: string
   updated_at: string
 }
@@ -46,6 +50,11 @@ export interface MessagesPage {
 export async function getChats(): Promise<Chat[]> {
   const { data } = await apiClient.get<{ chats: Chat[] }>('/chats')
   return data.chats
+}
+
+export async function getNotesChat(): Promise<Chat> {
+  const { data } = await apiClient.get<Chat>('/chats/notes')
+  return data
 }
 
 export async function getChat(chatId: string): Promise<Chat> {

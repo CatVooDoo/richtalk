@@ -40,3 +40,12 @@ func (s *ChatService) GetChat(ctx context.Context, chatID, requesterID uuid.UUID
 	}
 	return chat, nil
 }
+
+func (s *ChatService) GetNotesChat(ctx context.Context, userID uuid.UUID) (*model.ChatWithLastMessage, error) {
+	chat, err := s.chats.GetNotesChat(ctx, userID)
+	if err != nil {
+		s.log.Error("get notes chat", "user_id", userID, "error", err)
+		return nil, err
+	}
+	return chat, nil
+}

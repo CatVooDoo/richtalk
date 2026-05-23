@@ -177,7 +177,9 @@ func (r *ChatRepo) ListByUserID(ctx context.Context, userID uuid.UUID) ([]model.
 			ORDER BY created_at DESC
 			LIMIT 1
 		) m ON TRUE
-		ORDER BY COALESCE(m.created_at, c.created_at) DESC`
+		ORDER BY
+			CASE WHEN c.type = 'notes' THEN 0 ELSE 1 END,
+			COALESCE(m.created_at, c.created_at) DESC`
 
 	rows, err := r.db.Query(ctx, q, userID.String())
 	if err != nil {
@@ -235,6 +237,99 @@ func (r *ChatRepo) ListByUserID(ctx context.Context, userID uuid.UUID) ([]model.
 		chats = append(chats, c)
 	}
 	return chats, rows.Err()
+}
+
+// CreateNotesChat creates a notes (self-chat) for a user. Called once at registration.
+func (r *ChatRepo) CreateNotesChat(ctx context.Context, userID uuid.UUID) (*model.Chat, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var chat model.Chat
+	var chatIDStr, chatTypeStr string
+	err = tx.QueryRow(ctx,
+		`INSERT INTO chats (type) VALUES ('notes') RETURNING id, type, created_at, updated_at`,
+	).Scan(&chatIDStr, &chatTypeStr, &chat.CreatedAt, &chat.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("insert notes chat: %w", err)
+	}
+	chat.ID = uuid.MustParse(chatIDStr)
+	chat.Type = model.ChatType(chatTypeStr)
+
+	if _, err = tx.Exec(ctx,
+		`INSERT INTO chat_members (chat_id, user_id) VALUES ($1, $2)`,
+		chatIDStr, userID.String(),
+	); err != nil {
+		return nil, fmt.Errorf("insert notes member: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return &chat, nil
+}
+
+// GetNotesChat returns the notes chat for a user with the last message.
+func (r *ChatRepo) GetNotesChat(ctx context.Context, userID uuid.UUID) (*model.ChatWithLastMessage, error) {
+	const q = `
+		SELECT
+			c.id, c.type, c.name, c.created_at, c.updated_at,
+			m.id, m.content, m.author_id, m.created_at, m.deleted_at
+		FROM chats c
+		JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
+		LEFT JOIN LATERAL (
+			SELECT id, content, author_id, created_at, deleted_at
+			FROM messages
+			WHERE chat_id = c.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) m ON TRUE
+		WHERE c.type = 'notes'
+		LIMIT 1`
+
+	var (
+		idStr, typeStr  string
+		name            *string
+		createdAt       time.Time
+		updatedAt       time.Time
+		lastMsgID       *string
+		lastMsgContent  *string
+		lastMsgAuthorID *string
+		lastMsgCreAt    *time.Time
+		lastMsgDeletedAt *time.Time
+	)
+	err := r.db.QueryRow(ctx, q, userID.String()).Scan(
+		&idStr, &typeStr, &name, &createdAt, &updatedAt,
+		&lastMsgID, &lastMsgContent, &lastMsgAuthorID, &lastMsgCreAt, &lastMsgDeletedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, model.ErrChatNotFound
+		}
+		return nil, fmt.Errorf("get notes chat: %w", err)
+	}
+
+	c := &model.ChatWithLastMessage{
+		Chat: model.Chat{
+			ID:        uuid.MustParse(idStr),
+			Type:      model.ChatType(typeStr),
+			Name:      name,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+		},
+	}
+	if lastMsgID != nil && lastMsgContent != nil && lastMsgAuthorID != nil && lastMsgCreAt != nil {
+		c.LastMessage = &model.LastMessage{
+			ID:        uuid.MustParse(*lastMsgID),
+			Content:   *lastMsgContent,
+			AuthorID:  uuid.MustParse(*lastMsgAuthorID),
+			CreatedAt: *lastMsgCreAt,
+			Deleted:   lastMsgDeletedAt != nil,
+		}
+	}
+	return c, nil
 }
 
 // GetMemberIDs returns all member UUIDs for a chat. Used by the WS hub for typing fan-out.

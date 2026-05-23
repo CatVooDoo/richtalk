@@ -79,6 +79,16 @@ func (h *ChatHandler) CreateDirect(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, mapChat(chat))
 }
 
+func (h *ChatHandler) GetNotes(w http.ResponseWriter, r *http.Request) {
+	userID := mustUserID(r)
+	chat, err := h.chats.GetNotesChat(r.Context(), userID)
+	if err != nil {
+		mapChatError(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, mapChat(chat))
+}
+
 func (h *ChatHandler) Get(w http.ResponseWriter, r *http.Request) {
 	userID := mustUserID(r)
 	chatID, ok := pathUUID(r, "chatID")

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"richtalk/api/internal/model"
@@ -18,6 +19,7 @@ import (
 type AuthService struct {
 	users         *repository.UserRepo
 	refreshTokens *repository.RefreshTokenRepo
+	chats         *repository.ChatRepo
 	jwt           *JWTService
 	refreshTTL    time.Duration
 	log           *slog.Logger
@@ -26,6 +28,7 @@ type AuthService struct {
 func NewAuthService(
 	users *repository.UserRepo,
 	refreshTokens *repository.RefreshTokenRepo,
+	chats *repository.ChatRepo,
 	jwt *JWTService,
 	refreshTTL time.Duration,
 	log *slog.Logger,
@@ -33,6 +36,7 @@ func NewAuthService(
 	return &AuthService{
 		users:         users,
 		refreshTokens: refreshTokens,
+		chats:         chats,
 		jwt:           jwt,
 		refreshTTL:    refreshTTL,
 		log:           log,
@@ -56,6 +60,12 @@ func (s *AuthService) Register(ctx context.Context, username, password string) (
 		return nil, err
 	}
 
+	// Create notes (self) chat for the new user — non-fatal if it fails.
+	userUUID, _ := uuid.Parse(user.ID)
+	if _, noteErr := s.chats.CreateNotesChat(ctx, userUUID); noteErr != nil {
+		s.log.Warn("failed to create notes chat", "user_id", user.ID, "error", noteErr)
+	}
+
 	return s.issueTokens(ctx, user)
 }
 
@@ -63,7 +73,6 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (*Au
 	user, err := s.users.GetByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, model.ErrUserNotFound) {
-			// Don't distinguish "not found" from "wrong password" — timing-safe
 			return nil, model.ErrInvalidCredentials
 		}
 		return nil, err
@@ -95,7 +104,6 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*AuthResult
 		return nil, err
 	}
 
-	// Rotate: invalidate old token before issuing new one
 	if err := s.refreshTokens.Delete(ctx, rawToken); err != nil {
 		return nil, fmt.Errorf("rotate refresh token: %w", err)
 	}
@@ -104,7 +112,6 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*AuthResult
 }
 
 func (s *AuthService) Logout(ctx context.Context, rawToken string) error {
-	// Ignore ErrTokenNotFound — idempotent logout is fine
 	err := s.refreshTokens.Delete(ctx, rawToken)
 	if errors.Is(err, model.ErrTokenNotFound) {
 		return nil

@@ -112,9 +112,9 @@ func (s *MessageService) DeleteMessage(ctx context.Context, messageID, requester
 	return nil
 }
 
-// fanout publishes an event with the full message object as payload.
+// fanout publishes an event with the message serialised in REST-compatible format.
 func (s *MessageService) fanout(ctx context.Context, evType event.Type, msg *model.Message, chatID uuid.UUID) {
-	payloadJSON, err := json.Marshal(msg)
+	payloadJSON, err := json.Marshal(msg.ToEventPayload())
 	if err != nil {
 		s.log.Error("marshal message payload", "error", err)
 		return
