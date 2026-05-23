@@ -19,8 +19,13 @@ func NewChatService(chats *repository.ChatRepo, log *slog.Logger) *ChatService {
 	return &ChatService{chats: chats, log: log}
 }
 
-func (s *ChatService) GetOrCreateDirect(ctx context.Context, requesterID, targetUserID uuid.UUID) (*model.Chat, error) {
-	return s.chats.CreateDirect(ctx, requesterID, targetUserID)
+func (s *ChatService) GetOrCreateDirect(ctx context.Context, requesterID, targetUserID uuid.UUID) (*model.ChatWithLastMessage, error) {
+	chat, err := s.chats.CreateDirect(ctx, requesterID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	// Fetch full details (other_user, last message) now that the chat exists.
+	return s.chats.GetByID(ctx, chat.ID, requesterID)
 }
 
 func (s *ChatService) ListChats(ctx context.Context, userID uuid.UUID) ([]model.ChatWithLastMessage, error) {
