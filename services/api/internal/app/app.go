@@ -15,12 +15,14 @@ import (
 	"richtalk/api/internal/handler"
 	"richtalk/api/internal/repository"
 	"richtalk/api/internal/service"
+	"richtalk/api/internal/ws"
 )
 
 type App struct {
 	server *http.Server
 	pgPool *pgxpool.Pool
 	redis  *redis.Client
+	hub    *ws.Hub
 	log    *slog.Logger
 }
 
@@ -48,15 +50,24 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 
 	userRepo := repository.NewUserRepo(pgPool)
 	refreshRepo := repository.NewRefreshTokenRepo(pgPool)
+	chatRepo := repository.NewChatRepo(pgPool)
+	messageRepo := repository.NewMessageRepo(pgPool)
 
 	jwtSvc := service.NewJWTService(cfg.JWTSecret, cfg.AccessTokenTTL)
 	authSvc := service.NewAuthService(userRepo, refreshRepo, jwtSvc, cfg.RefreshTokenTTL, log)
 	userSvc := service.NewUserService(userRepo, log)
+	chatSvc := service.NewChatService(chatRepo, log)
+	messageSvc := service.NewMessageService(messageRepo, chatRepo, rdb, log)
+
+	hub := ws.NewHub(rdb, chatRepo, log)
 
 	router := handler.NewRouter(handler.Deps{
 		AuthSvc: authSvc,
 		UserSvc: userSvc,
+		ChatSvc: chatSvc,
+		MsgSvc:  messageSvc,
 		JWTSvc:  jwtSvc,
+		Hub:     hub,
 		PGPool:  pgPool,
 		Redis:   rdb,
 		Log:     log,
@@ -74,12 +85,15 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		server: srv,
 		pgPool: pgPool,
 		redis:  rdb,
+		hub:    hub,
 		log:    log,
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
+
+	go a.hub.Run(ctx)
 
 	go func() {
 		a.log.Info("http server started", "addr", a.server.Addr)
