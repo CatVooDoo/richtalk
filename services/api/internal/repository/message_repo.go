@@ -21,32 +21,50 @@ func NewMessageRepo(db *pgxpool.Pool) *MessageRepo {
 	return &MessageRepo{db: db}
 }
 
+type MessageCreateParams struct {
+	ChatID         uuid.UUID
+	SenderID       uuid.UUID
+	Content        string
+	AttachmentType *string
+	AttachmentURL  *string
+	AttachmentName *string
+	AttachmentSize *int64
+}
+
 // Create inserts a message and returns it with author info in one CTE query.
-func (r *MessageRepo) Create(ctx context.Context, chatID, senderID uuid.UUID, content string) (*model.Message, error) {
+func (r *MessageRepo) Create(ctx context.Context, p MessageCreateParams) (*model.Message, error) {
 	const q = `
 		WITH ins AS (
-			INSERT INTO messages (chat_id, author_id, content)
-			VALUES ($1, $2, $3)
-			RETURNING id, chat_id, author_id, content, created_at, updated_at, deleted_at
+			INSERT INTO messages (chat_id, author_id, content, attachment_type, attachment_url, attachment_name, attachment_size)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id, chat_id, author_id, content,
+			          attachment_type, attachment_url, attachment_name, attachment_size,
+			          created_at, updated_at, deleted_at
 		)
-		SELECT i.id, i.chat_id, i.content, i.created_at, i.updated_at, i.deleted_at,
+		SELECT i.id, i.chat_id, i.content,
+		       i.attachment_type, i.attachment_url, i.attachment_name, i.attachment_size,
+		       i.created_at, i.updated_at, i.deleted_at,
 		       u.id AS author_id, u.username
 		FROM ins i
 		JOIN users u ON u.id = i.author_id`
 
-	return r.scanMessage(ctx, r.db.QueryRow(ctx, q, chatID.String(), senderID.String(), content))
+	return r.scanMessage(ctx, r.db.QueryRow(ctx, q,
+		p.ChatID.String(), p.SenderID.String(), p.Content,
+		p.AttachmentType, p.AttachmentURL, p.AttachmentName, p.AttachmentSize,
+	))
 }
 
 // ListByChatID returns messages in a chat older than `before`, newest first.
-// If before is nil, starts from now.
 func (r *MessageRepo) ListByChatID(ctx context.Context, chatID uuid.UUID, before *time.Time, limit int) ([]model.Message, error) {
-	cursor := time.Now().Add(time.Second) // just after now
+	cursor := time.Now().Add(time.Second)
 	if before != nil {
 		cursor = *before
 	}
 
 	const q = `
-		SELECT m.id, m.chat_id, m.content, m.created_at, m.updated_at, m.deleted_at,
+		SELECT m.id, m.chat_id, m.content,
+		       m.attachment_type, m.attachment_url, m.attachment_name, m.attachment_size,
+		       m.created_at, m.updated_at, m.deleted_at,
 		       u.id AS author_id, u.username
 		FROM messages m
 		JOIN users u ON u.id = m.author_id
@@ -79,9 +97,13 @@ func (r *MessageRepo) Update(ctx context.Context, messageID, senderID uuid.UUID,
 			UPDATE messages
 			SET content = $1, updated_at = now()
 			WHERE id = $2 AND author_id = $3 AND deleted_at IS NULL
-			RETURNING id, chat_id, author_id, content, created_at, updated_at, deleted_at
+			RETURNING id, chat_id, author_id, content,
+			          attachment_type, attachment_url, attachment_name, attachment_size,
+			          created_at, updated_at, deleted_at
 		)
-		SELECT u.id, u.chat_id, u.content, u.created_at, u.updated_at, u.deleted_at,
+		SELECT u.id, u.chat_id, u.content,
+		       u.attachment_type, u.attachment_url, u.attachment_name, u.attachment_size,
+		       u.created_at, u.updated_at, u.deleted_at,
 		       usr.id AS author_id, usr.username
 		FROM upd u
 		JOIN users usr ON usr.id = u.author_id`
@@ -112,7 +134,9 @@ func (r *MessageRepo) SoftDelete(ctx context.Context, messageID, senderID uuid.U
 // GetByID returns a message with its author info.
 func (r *MessageRepo) GetByID(ctx context.Context, messageID uuid.UUID) (*model.Message, error) {
 	const q = `
-		SELECT m.id, m.chat_id, m.content, m.created_at, m.updated_at, m.deleted_at,
+		SELECT m.id, m.chat_id, m.content,
+		       m.attachment_type, m.attachment_url, m.attachment_name, m.attachment_size,
+		       m.created_at, m.updated_at, m.deleted_at,
 		       u.id AS author_id, u.username
 		FROM messages m
 		JOIN users u ON u.id = m.author_id
@@ -125,7 +149,6 @@ func (r *MessageRepo) GetByID(ctx context.Context, messageID uuid.UUID) (*model.
 	return msg, err
 }
 
-// checkOwnership distinguishes "not found" from "wrong author" after a failed update/delete.
 func (r *MessageRepo) checkOwnership(ctx context.Context, messageID, senderID uuid.UUID) error {
 	const q = `SELECT author_id FROM messages WHERE id = $1 AND deleted_at IS NULL`
 	var authorIDStr string
@@ -143,15 +166,26 @@ func (r *MessageRepo) checkOwnership(ctx context.Context, messageID, senderID uu
 }
 
 // scanMessage scans a single message row from QueryRow.
+// Column order: id, chat_id, content, attachment_type, attachment_url, attachment_name, attachment_size,
+//               created_at, updated_at, deleted_at, author_id, username
 func (r *MessageRepo) scanMessage(_ context.Context, row pgx.Row) (*model.Message, error) {
 	var (
 		idStr, chatIDStr        string
 		content                 string
+		attachType              *string
+		attachURL               *string
+		attachName              *string
+		attachSize              *int64
 		createdAt, updatedAt    time.Time
 		deletedAt               *time.Time
 		authorIDStr, authorName string
 	)
-	if err := row.Scan(&idStr, &chatIDStr, &content, &createdAt, &updatedAt, &deletedAt, &authorIDStr, &authorName); err != nil {
+	if err := row.Scan(
+		&idStr, &chatIDStr, &content,
+		&attachType, &attachURL, &attachName, &attachSize,
+		&createdAt, &updatedAt, &deletedAt,
+		&authorIDStr, &authorName,
+	); err != nil {
 		return nil, err
 	}
 	return &model.Message{
@@ -161,23 +195,36 @@ func (r *MessageRepo) scanMessage(_ context.Context, row pgx.Row) (*model.Messag
 			ID:       uuid.MustParse(authorIDStr),
 			Username: authorName,
 		},
-		Content:   content,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
-		DeletedAt: deletedAt,
+		Content:        content,
+		AttachmentType: attachType,
+		AttachmentURL:  attachURL,
+		AttachmentName: attachName,
+		AttachmentSize: attachSize,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		DeletedAt:      deletedAt,
 	}, nil
 }
 
-// scanMessageRow scans from an open Rows cursor.
+// scanMessageRow scans from an open Rows cursor (same column order as scanMessage).
 func (r *MessageRepo) scanMessageRow(rows pgx.Rows) (model.Message, error) {
 	var (
 		idStr, chatIDStr        string
 		content                 string
+		attachType              *string
+		attachURL               *string
+		attachName              *string
+		attachSize              *int64
 		createdAt, updatedAt    time.Time
 		deletedAt               *time.Time
 		authorIDStr, authorName string
 	)
-	if err := rows.Scan(&idStr, &chatIDStr, &content, &createdAt, &updatedAt, &deletedAt, &authorIDStr, &authorName); err != nil {
+	if err := rows.Scan(
+		&idStr, &chatIDStr, &content,
+		&attachType, &attachURL, &attachName, &attachSize,
+		&createdAt, &updatedAt, &deletedAt,
+		&authorIDStr, &authorName,
+	); err != nil {
 		return model.Message{}, fmt.Errorf("scan message: %w", err)
 	}
 	return model.Message{
@@ -187,9 +234,13 @@ func (r *MessageRepo) scanMessageRow(rows pgx.Rows) (model.Message, error) {
 			ID:       uuid.MustParse(authorIDStr),
 			Username: authorName,
 		},
-		Content:   content,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
-		DeletedAt: deletedAt,
+		Content:        content,
+		AttachmentType: attachType,
+		AttachmentURL:  attachURL,
+		AttachmentName: attachName,
+		AttachmentSize: attachSize,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		DeletedAt:      deletedAt,
 	}, nil
 }

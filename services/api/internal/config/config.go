@@ -22,6 +22,9 @@ type Config struct {
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+
+	UploadsDir     string
+	UploadsBaseURL string
 }
 
 func Load() (*Config, error) {
@@ -41,7 +44,9 @@ func Load() (*Config, error) {
 		RedisAddr:     getEnv("REDIS_ADDR", "redis:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 
-		JWTSecret: getEnv("JWT_SECRET", ""),
+		JWTSecret:      getEnv("JWT_SECRET", ""),
+		UploadsDir:     getEnv("UPLOADS_DIR", "/uploads"),
+		UploadsBaseURL: getEnv("UPLOADS_BASE_URL", "/uploads"),
 	}
 
 	accessTTL, err := time.ParseDuration(getEnv("ACCESS_TOKEN_TTL", "15m"))

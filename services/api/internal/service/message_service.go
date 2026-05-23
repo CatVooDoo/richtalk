@@ -38,17 +38,38 @@ func NewMessageService(
 	}
 }
 
-func (s *MessageService) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, content string) (*model.Message, error) {
+type MessageAttachment struct {
+	Type string
+	URL  string
+	Name string
+	Size int64
+}
+
+func (s *MessageService) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, content string, att *MessageAttachment) (*model.Message, error) {
+	if content == "" && att == nil {
+		return nil, fmt.Errorf("message must have content or attachment")
+	}
 	if len([]rune(content)) > maxMessageContent {
 		return nil, fmt.Errorf("content exceeds %d characters", maxMessageContent)
 	}
 
-	// Verify sender is a member by fetching chat (returns ErrChatNotFound if not member)
 	if _, err := s.chats.GetByID(ctx, chatID, senderID); err != nil {
 		return nil, err
 	}
 
-	msg, err := s.messages.Create(ctx, chatID, senderID, content)
+	params := repository.MessageCreateParams{
+		ChatID:   chatID,
+		SenderID: senderID,
+		Content:  content,
+	}
+	if att != nil {
+		params.AttachmentType = &att.Type
+		params.AttachmentURL = &att.URL
+		params.AttachmentName = &att.Name
+		params.AttachmentSize = &att.Size
+	}
+
+	msg, err := s.messages.Create(ctx, params)
 	if err != nil {
 		s.log.Error("create message", "chat_id", chatID, "error", err)
 		return nil, err
@@ -87,7 +108,6 @@ func (s *MessageService) EditMessage(ctx context.Context, messageID, requesterID
 }
 
 func (s *MessageService) DeleteMessage(ctx context.Context, messageID, requesterID uuid.UUID) error {
-	// Fetch first to get chatID for fan-out
 	msg, err := s.messages.GetByID(ctx, messageID)
 	if err != nil {
 		return err
@@ -103,16 +123,14 @@ func (s *MessageService) DeleteMessage(ctx context.Context, messageID, requester
 		ChatID    string `json:"chat_id"`
 		DeletedAt string `json:"deleted_at"`
 	}
-	payload := deletedPayload{
+	s.fanoutPayload(ctx, event.MessageDeleted, deletedPayload{
 		ID:        messageID.String(),
 		ChatID:    msg.ChatID.String(),
 		DeletedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	s.fanoutPayload(ctx, event.MessageDeleted, payload, msg.ChatID)
+	}, msg.ChatID)
 	return nil
 }
 
-// fanout publishes an event with the message serialised in REST-compatible format.
 func (s *MessageService) fanout(ctx context.Context, evType event.Type, msg *model.Message, chatID uuid.UUID) {
 	payloadJSON, err := json.Marshal(msg.ToEventPayload())
 	if err != nil {
@@ -122,7 +140,6 @@ func (s *MessageService) fanout(ctx context.Context, evType event.Type, msg *mod
 	s.publishEnvelope(ctx, evType, json.RawMessage(payloadJSON), chatID)
 }
 
-// fanoutPayload publishes an event with an arbitrary payload struct.
 func (s *MessageService) fanoutPayload(ctx context.Context, evType event.Type, payload any, chatID uuid.UUID) {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {

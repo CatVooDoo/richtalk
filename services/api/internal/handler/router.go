@@ -24,6 +24,9 @@ type Deps struct {
 	PGPool   *pgxpool.Pool
 	Redis    *redis.Client
 	Log      *slog.Logger
+
+	UploadsDir     string
+	UploadsBaseURL string
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -38,6 +41,7 @@ func NewRouter(d Deps) http.Handler {
 	userH := NewUserHandler(d.UserSvc)
 	chatH := NewChatHandler(d.ChatSvc, d.MsgSvc)
 	msgH := NewMessageHandler(d.MsgSvc)
+	uploadH := NewUploadHandler(d.UploadsDir, d.UploadsBaseURL)
 	healthH := NewHealthHandler(d.PGPool, d.Redis)
 
 	r.Get("/api/health", healthH.Check)
@@ -58,14 +62,17 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/users/me", userH.Me)
 		r.Get("/users/search", userH.Search)
 
+		// File uploads
+		r.Post("/uploads", uploadH.Upload)
+
 		// Chats
 		r.Get("/chats", chatH.List)
 		r.Post("/chats/direct", chatH.CreateDirect)
-		r.Get("/chats/notes", chatH.GetNotes) // must be before /{chatID}
+		r.Get("/chats/notes", chatH.GetNotes)
 		r.Get("/chats/{chatID}", chatH.Get)
 		r.Get("/chats/{chatID}/messages", chatH.ListMessages)
 
-		// Messages (edit / delete by ID)
+		// Messages
 		r.Post("/chats/{chatID}/messages", msgH.Send)
 		r.Patch("/messages/{messageID}", msgH.Edit)
 		r.Delete("/messages/{messageID}", msgH.Delete)

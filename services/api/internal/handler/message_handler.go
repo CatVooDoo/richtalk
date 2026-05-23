@@ -19,7 +19,11 @@ func NewMessageHandler(messages *service.MessageService) *MessageHandler {
 }
 
 type sendMessageRequest struct {
-	Content string `json:"content" validate:"required,min=1,max=4096"`
+	Content        string  `json:"content"         validate:"max=4096"`
+	AttachmentURL  *string `json:"attachment_url"`
+	AttachmentType *string `json:"attachment_type" validate:"omitempty,oneof=image audio"`
+	AttachmentName *string `json:"attachment_name"`
+	AttachmentSize *int64  `json:"attachment_size"`
 }
 
 type editMessageRequest struct {
@@ -43,7 +47,30 @@ func (h *MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := h.messages.SendMessage(r.Context(), chatID, userID, req.Content)
+	if req.Content == "" && req.AttachmentURL == nil {
+		httpx.Error(w, http.StatusBadRequest, "empty_message", "Сообщение должно содержать текст или вложение")
+		return
+	}
+
+	var att *service.MessageAttachment
+	if req.AttachmentURL != nil && req.AttachmentType != nil {
+		name := ""
+		if req.AttachmentName != nil {
+			name = *req.AttachmentName
+		}
+		var size int64
+		if req.AttachmentSize != nil {
+			size = *req.AttachmentSize
+		}
+		att = &service.MessageAttachment{
+			Type: *req.AttachmentType,
+			URL:  *req.AttachmentURL,
+			Name: name,
+			Size: size,
+		}
+	}
+
+	msg, err := h.messages.SendMessage(r.Context(), chatID, userID, req.Content, att)
 	if err != nil {
 		mapMessageError(w, err)
 		return
@@ -100,7 +127,7 @@ type messageResponse struct {
 	ID             string         `json:"id"`
 	ChatID         string         `json:"chat_id"`
 	Author         authorResponse `json:"author"`
-	Content        string         `json:"content"` // empty when deleted
+	Content        string         `json:"content"`
 	Deleted        bool           `json:"deleted"`
 	AttachmentType *string        `json:"attachment_type,omitempty"`
 	AttachmentURL  *string        `json:"attachment_url,omitempty"`

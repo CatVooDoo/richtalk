@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +29,10 @@ type App struct {
 
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	ctx := context.Background()
+
+	if err := os.MkdirAll(cfg.UploadsDir, 0755); err != nil {
+		return nil, fmt.Errorf("create uploads dir: %w", err)
+	}
 
 	log.Info("running migrations", "path", cfg.MigrationsPath)
 	if err := db.RunMigrations(cfg.DatabaseURL, cfg.MigrationsPath); err != nil {
@@ -62,15 +67,17 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	hub := ws.NewHub(rdb, chatRepo, log)
 
 	router := handler.NewRouter(handler.Deps{
-		AuthSvc: authSvc,
-		UserSvc: userSvc,
-		ChatSvc: chatSvc,
-		MsgSvc:  messageSvc,
-		JWTSvc:  jwtSvc,
-		Hub:     hub,
-		PGPool:  pgPool,
-		Redis:   rdb,
-		Log:     log,
+		AuthSvc:        authSvc,
+		UserSvc:        userSvc,
+		ChatSvc:        chatSvc,
+		MsgSvc:         messageSvc,
+		JWTSvc:         jwtSvc,
+		Hub:            hub,
+		PGPool:         pgPool,
+		Redis:          rdb,
+		Log:            log,
+		UploadsDir:     cfg.UploadsDir,
+		UploadsBaseURL: cfg.UploadsBaseURL,
 	})
 
 	srv := &http.Server{

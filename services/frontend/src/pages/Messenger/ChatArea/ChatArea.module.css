@@ -183,11 +183,113 @@
 
 .editedTag { opacity: 0.7; }
 
-.attachStub {
+/* Attachment image in message bubble */
+.attachImage {
   display: block;
+  max-width: 100%;
+  max-height: 280px;
+  border-radius: 10px;
+  margin-top: 6px;
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+/* Audio player in message bubble */
+.attachAudio {
+  display: block;
+  width: 100%;
+  min-width: 200px;
+  margin-top: 6px;
+  border-radius: 8px;
+  accent-color: #a855f7;
+}
+
+/* Pending attachment preview bar (above input) */
+.attachPreview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.attachPreviewImg {
+  height: 48px;
+  width: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+}
+
+.attachPreviewAudio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 8px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachPreviewRemove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.attachPreviewRemove:hover { color: rgba(239, 68, 68, 0.8); }
+
+/* Hidden file input */
+.fileInputHidden { display: none; }
+
+/* Recording active button */
+.recBtnActive {
+  color: rgba(239, 68, 68, 0.85) !important;
+  animation: recPulse 1s ease-in-out infinite;
+}
+
+@keyframes recPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Recording duration counter */
+.recDuration {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
-  margin-top: 4px;
+  color: rgba(239, 68, 68, 0.85);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 32px;
+}
+
+/* Upload spinner inside send button */
+.uploadSpinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #a855f7;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Typing indicator */

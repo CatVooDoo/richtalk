@@ -33,7 +33,7 @@ export interface Message {
   author: MessageAuthor
   content: string
   deleted: boolean
-  attachment_type?: 'image' | 'file' | null
+  attachment_type?: 'image' | 'audio' | null
   attachment_url?: string | null
   attachment_name?: string | null
   attachment_size?: number | null
@@ -45,6 +45,20 @@ export interface MessagesPage {
   messages: Message[]
   has_more: boolean
   next_cursor: string | null
+}
+
+export interface MessageAttachment {
+  url: string
+  type: 'image' | 'audio'
+  name: string
+  size: number
+}
+
+export interface UploadResult {
+  url: string
+  type: 'image' | 'audio'
+  name: string
+  size: number
 }
 
 export async function getChats(): Promise<Chat[]> {
@@ -78,8 +92,19 @@ export async function getMessages(
   return data
 }
 
-export async function sendMessage(chatId: string, content: string): Promise<Message> {
-  const { data } = await apiClient.post<Message>(`/chats/${chatId}/messages`, { content })
+export async function sendMessage(
+  chatId: string,
+  content: string,
+  attachment?: MessageAttachment
+): Promise<Message> {
+  const body: Record<string, unknown> = { content }
+  if (attachment) {
+    body.attachment_url  = attachment.url
+    body.attachment_type = attachment.type
+    body.attachment_name = attachment.name
+    body.attachment_size = attachment.size
+  }
+  const { data } = await apiClient.post<Message>(`/chats/${chatId}/messages`, body)
   return data
 }
 
@@ -90,4 +115,14 @@ export async function editMessage(messageId: string, content: string): Promise<M
 
 export async function deleteMessage(messageId: string): Promise<void> {
   await apiClient.delete(`/messages/${messageId}`)
+}
+
+export async function uploadFile(file: File | Blob, filename?: string): Promise<UploadResult> {
+  const form = new FormData()
+  // For Blob (MediaRecorder output), pass explicit filename with extension
+  form.append('file', file, filename ?? (file instanceof File ? file.name : 'file'))
+  const { data } = await apiClient.post<UploadResult>('/uploads', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
 }
