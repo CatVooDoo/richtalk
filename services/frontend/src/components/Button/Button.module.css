@@ -56,3 +56,11 @@
   background: rgba(255, 255, 255, 0.08);
 }
 .icon:disabled { opacity: 0.3; cursor: not-allowed; }
+
+@media (max-width: 639px) {
+  .icon {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 10px;
+  }
+}

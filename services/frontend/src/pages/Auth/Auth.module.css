@@ -1,5 +1,6 @@
 .page {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -44,12 +45,19 @@
 .card {
   position: relative;
   z-index: 1;
-  width: 360px;
+  width: min(360px, calc(100% - 32px));
   padding: 40px 32px 36px;
   border-radius: 24px;
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+@media (max-width: 400px) {
+  .card {
+    padding: 32px 20px 28px;
+    border-radius: 20px;
+  }
 }
 
 .cardHeader {

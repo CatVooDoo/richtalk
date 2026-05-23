@@ -6,7 +6,16 @@ import {
   type KeyboardEvent,
   type ChangeEvent,
 } from 'react'
-import { IconSend, IconPaperclip, IconX, IconPencil, IconTrash, IconCopy } from '@tabler/icons-react'
+import {
+  IconSend,
+  IconPaperclip,
+  IconX,
+  IconPencil,
+  IconTrash,
+  IconCopy,
+  IconArrowLeft,
+  IconArrowDown,
+} from '@tabler/icons-react'
 import { useChatStore } from '../../../store/chatStore'
 import { useAuthStore } from '../../../store/authStore'
 import { useWsStore } from '../../../store/wsStore'
@@ -48,11 +57,23 @@ function isEdited(msg: Message): boolean {
   return new Date(msg.updated_at).getTime() - new Date(msg.created_at).getTime() > 1000
 }
 
+// ── constants ─────────────────────────────────────────────────────────────────
+
+const MENU_W = 180
+const MENU_H = 155
+
+// ── props ─────────────────────────────────────────────────────────────────────
+
+interface Props {
+  mobileHidden?: boolean
+  onBack?: () => void
+}
+
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function ChatArea() {
+export default function ChatArea({ mobileHidden, onBack }: Props) {
   const { activeChat, messages, hasMore, typingUsers, setMessages, setHasMore, addMessage,
-          updateMessage, markDeleted, bumpChat } = useChatStore()
+          updateMessage, markDeleted, bumpChat, markRead } = useChatStore()
   const { user } = useAuthStore()
   const { send, connected } = useWsStore()
 
@@ -68,6 +89,7 @@ export default function ChatArea() {
   const shouldRestoreScrollRef = useRef(false)
   const isTypingRef = useRef(false)
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // local state
   const [text, setText] = useState('')
@@ -90,13 +112,16 @@ export default function ChatArea() {
           if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
         }, 30)
       })
-      .catch(console.error)
+      .catch(() => setToastMsg('Ошибка загрузки сообщений')) // B6
   }, [activeChat?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll to bottom on new message if already at bottom
+  // Scroll to bottom on new message if already at bottom + mark as read (B2)
   useEffect(() => {
     if (isAtBottom && chatMessages.length > 0) {
-      endRef.current?.scrollIntoView({ behavior: 'smooth' })
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
+      if (activeChat && !mobileHidden) markRead(activeChat.id)
     }
   }, [chatMessages.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -129,7 +154,9 @@ export default function ChatArea() {
   const handleScroll = () => {
     if (!scrollRef.current) return
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
-    setIsAtBottom(scrollHeight - scrollTop - clientHeight < 80)
+    const atBottom = scrollHeight - scrollTop - clientHeight < 80
+    setIsAtBottom(atBottom)
+    if (atBottom && activeChat && !mobileHidden) markRead(activeChat.id)
     if (scrollTop < 120 && !loadingMore && activeChat && hasMore[activeChat.id]) {
       loadOlder()
     }
@@ -212,7 +239,6 @@ export default function ChatArea() {
         if (textareaRef.current) {
           textareaRef.current.style.height = 'auto'
         }
-        endRef.current?.scrollIntoView({ behavior: 'smooth' })
       }
     } catch (err) {
       console.error(err)
@@ -248,17 +274,47 @@ export default function ChatArea() {
     setContextMenu({ msg, x: e.clientX, y: e.clientY })
   }
 
+  // U4: long-press for touch devices
+  const handleLongPressStart = (msg: Message, e: React.TouchEvent) => {
+    if (msg.deleted) return
+    const touch = e.touches[0]
+    const clientX = touch.clientX
+    const clientY = touch.clientY
+    longPressTimer.current = setTimeout(() => {
+      setContextMenu({ msg, x: clientX, y: clientY })
+    }, 500)
+  }
+
+  const handleLongPressEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
   // ── render ────────────────────────────────────────────────────────────────
 
   if (!activeChat) {
     return (
-      <div className={styles.area}>
+      <div className={`${styles.area} ${mobileHidden ? styles.areaHidden : ''}`}>
         <div className={styles.empty}>Выберите чат для начала общения</div>
       </div>
     )
   }
 
   const name = chatDisplayName(activeChat)
+
+  // B3: context menu position — flip if too close to edge
+  const menuLeft = contextMenu
+    ? contextMenu.x + MENU_W > window.innerWidth
+      ? Math.max(4, contextMenu.x - MENU_W)
+      : contextMenu.x
+    : 0
+  const menuTop = contextMenu
+    ? contextMenu.y + MENU_H > window.innerHeight
+      ? Math.max(4, contextMenu.y - MENU_H)
+      : contextMenu.y
+    : 0
 
   // Group messages by day
   const items: Array<{ type: 'divider'; label: string } | { type: 'msg'; msg: Message }> = []
@@ -273,9 +329,14 @@ export default function ChatArea() {
   }
 
   return (
-    <div className={styles.area}>
+    <div className={`${styles.area} ${mobileHidden ? styles.areaHidden : ''}`}>
       {/* Header */}
       <div className={styles.header}>
+        {/* Back button — hidden on desktop via CSS, shown on mobile */}
+        <button className={styles.backBtn} onClick={onBack} aria-label="Назад">
+          <IconArrowLeft size={20} stroke={2} />
+        </button>
+
         {isNotes ? (
           <div className={styles.notesIconHeader}>📝</div>
         ) : (
@@ -312,6 +373,9 @@ export default function ChatArea() {
               key={msg.id}
               className={`${styles.msgRow} ${isMine ? styles.msgRowRight : styles.msgRowLeft}`}
               onContextMenu={(e) => handleContextMenu(e, msg)}
+              onTouchStart={(e) => handleLongPressStart(msg, e)}
+              onTouchEnd={handleLongPressEnd}
+              onTouchMove={handleLongPressEnd}
             >
               {!isMine && <Avatar username={msg.author.username} size={28} />}
               <div
@@ -349,6 +413,17 @@ export default function ChatArea() {
 
         <div ref={endRef} />
       </div>
+
+      {/* U6: scroll-to-bottom floating button */}
+      {!isAtBottom && (
+        <button
+          className={styles.scrollDownBtn}
+          onClick={() => endRef.current?.scrollIntoView({ behavior: 'smooth' })}
+          aria-label="Прокрутить вниз"
+        >
+          <IconArrowDown size={16} stroke={2} />
+        </button>
+      )}
 
       {/* Edit bar */}
       {editing && (
@@ -401,10 +476,7 @@ export default function ChatArea() {
       {contextMenu && (
         <div
           className={`${styles.contextMenu} glass-strong`}
-          style={{
-            left: Math.min(contextMenu.x, window.innerWidth - 170),
-            top: Math.min(contextMenu.y, window.innerHeight - 130),
-          }}
+          style={{ left: menuLeft, top: menuTop }}
           onClick={(e) => e.stopPropagation()}
         >
           <button

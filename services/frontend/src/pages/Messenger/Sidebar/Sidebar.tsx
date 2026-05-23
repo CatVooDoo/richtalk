@@ -11,6 +11,11 @@ import Avatar from '../../../components/Avatar/Avatar'
 import Button from '../../../components/Button/Button'
 import styles from './Sidebar.module.css'
 
+interface Props {
+  mobileHidden?: boolean
+  onChatSelect?: () => void
+}
+
 function chatName(chat: Chat): string {
   if (chat.type === 'notes') return 'Заметки'
   if (chat.type === 'direct' && chat.other_user) return chat.other_user.username
@@ -39,21 +44,26 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced
 }
 
-export default function Sidebar() {
+export default function Sidebar({ mobileHidden, onChatSelect }: Props) {
   const { user } = useAuthStore()
   const { signOut } = useAuth()
-  const { chats, activeChat, setChats, setActiveChat, setMessages, setHasMore } = useChatStore()
+  const { chats, activeChat, setChats, setActiveChat, setMessages, setHasMore, typingUsers, readAt } = useChatStore()
 
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchUser[]>([])
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchLoading, setSearchLoading] = useState(false)
+  const [chatsLoading, setChatsLoading] = useState(true)
   const searchRef = useRef<HTMLDivElement>(null)
   const debouncedQuery = useDebounce(query, 300)
 
   // Load chats on mount
   useEffect(() => {
-    getChats().then(setChats).catch(console.error)
+    setChatsLoading(true)
+    getChats()
+      .then(setChats)
+      .catch(console.error)
+      .finally(() => setChatsLoading(false))
   }, [setChats])
 
   // Search users
@@ -89,6 +99,7 @@ export default function Sidebar() {
 
   const handleSelectChat = async (chat: Chat) => {
     setActiveChat(chat)
+    onChatSelect?.()
     if (!useChatStore.getState().messages[chat.id]?.length) {
       try {
         const page = await getMessages(chat.id)
@@ -115,11 +126,20 @@ export default function Sidebar() {
     }
   }
 
-  const showUnread = (chat: Chat) =>
-    chat.last_message && chat.last_message.author_id !== user?.id
+  // B2: unread badge uses readAt timestamps
+  const showUnread = (chat: Chat) => {
+    if (!chat.last_message) return false
+    if (chat.last_message.author_id === user?.id) return false
+    const rt = readAt[chat.id]
+    if (!rt) return true
+    return new Date(chat.last_message.created_at) > new Date(rt)
+  }
+
+  // B7: typing indicator in chat list
+  const isTypingInChat = (chat: Chat) => (typingUsers[chat.id] ?? []).length > 0
 
   return (
-    <div className={styles.sidebar}>
+    <div className={`${styles.sidebar} ${mobileHidden ? styles.sidebarHidden : ''}`}>
       <div className={styles.header}>
         <span className={styles.title}>RichTalk</span>
         <div className={styles.headerActions}>
@@ -144,12 +164,13 @@ export default function Sidebar() {
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
           />
-          {(searchResults.length > 0 || searchLoading) && (
+          {/* B1: show dropdown whenever loading OR has results OR query is long enough */}
+          {(searchResults.length > 0 || searchLoading || (debouncedQuery.length >= 2 && !searchLoading)) && (
             <div className={`${styles.searchDropdown} glass-strong`}>
               {searchLoading && (
                 <div className={styles.searchHint}>Поиск...</div>
               )}
-              {!searchLoading && searchResults.length === 0 && query.length >= 2 && (
+              {!searchLoading && searchResults.length === 0 && debouncedQuery.length >= 2 && (
                 <div className={styles.searchHint}>Не найдено</div>
               )}
               {searchResults.map((u) => (
@@ -168,7 +189,12 @@ export default function Sidebar() {
       )}
 
       <div className={styles.chatList}>
-        {chats.length === 0 ? (
+        {/* B5: show spinner while loading instead of empty state */}
+        {chatsLoading ? (
+          <div className={styles.loadingChats}>
+            <div className={styles.loadingRing} />
+          </div>
+        ) : chats.length === 0 ? (
           <div className={styles.emptyChats}>Нет чатов. Найдите людей через поиск!</div>
         ) : (
           chats.map((chat) => {
@@ -176,6 +202,7 @@ export default function Sidebar() {
             const isActive = activeChat?.id === chat.id
             const isNotes = chat.type === 'notes'
             const hasUnread = showUnread(chat)
+            const isTyping = isTypingInChat(chat)
 
             return (
               <div
@@ -198,15 +225,20 @@ export default function Sidebar() {
                     )}
                   </div>
                   <div className={styles.chatSubRow}>
-                    <span className={`${styles.lastMsg} ${chat.last_message?.deleted ? styles.lastMsgDeleted : ''}`}>
-                      {chat.last_message
-                        ? chat.last_message.deleted
+                    {/* B7: show "печатает..." when someone is typing */}
+                    <span className={`${styles.lastMsg} ${!isTyping && chat.last_message?.deleted ? styles.lastMsgDeleted : ''}`}>
+                      {isTyping ? (
+                        <span className={styles.typingHint}>печатает...</span>
+                      ) : chat.last_message ? (
+                        chat.last_message.deleted
                           ? 'Сообщение удалено'
                           : chat.last_message.content.slice(0, 35) +
                             (chat.last_message.content.length > 35 ? '…' : '')
-                        : isNotes
-                        ? 'Ваши заметки'
-                        : 'Нет сообщений'}
+                      ) : isNotes ? (
+                        'Ваши заметки'
+                      ) : (
+                        'Нет сообщений'
+                      )}
                     </span>
                     {hasUnread && !isActive && <span className={styles.badge} />}
                   </div>

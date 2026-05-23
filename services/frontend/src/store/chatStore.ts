@@ -7,6 +7,7 @@ interface ChatState {
   messages: Record<string, Message[]>   // chatId → messages (oldest first)
   hasMore: Record<string, boolean>
   typingUsers: Record<string, string[]> // chatId → userId[]
+  readAt: Record<string, string>        // chatId → ISO timestamp of last read
 
   setChats(chats: Chat[]): void
   addOrUpdateChat(chat: Chat): void
@@ -19,6 +20,7 @@ interface ChatState {
   markDeletedById(msgId: string): void
   setHasMore(chatId: string, v: boolean): void
   setTyping(chatId: string, userId: string, isTyping: boolean): void
+  markRead(chatId: string): void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -27,6 +29,7 @@ export const useChatStore = create<ChatState>((set) => ({
   messages: {},
   hasMore: {},
   typingUsers: {},
+  readAt: {},
 
   setChats: (chats) => set({ chats }),
 
@@ -59,7 +62,13 @@ export const useChatStore = create<ChatState>((set) => ({
       ),
     })),
 
-  setActiveChat: (activeChat) => set({ activeChat }),
+  setActiveChat: (activeChat) =>
+    set((s) => ({
+      activeChat,
+      readAt: activeChat
+        ? { ...s.readAt, [activeChat.id]: new Date().toISOString() }
+        : s.readAt,
+    })),
 
   setMessages: (chatId, msgs, prepend) =>
     set((s) => {
@@ -118,4 +127,9 @@ export const useChatStore = create<ChatState>((set) => ({
         : current.filter((id) => id !== userId)
       return { typingUsers: { ...s.typingUsers, [chatId]: next } }
     }),
+
+  markRead: (chatId) =>
+    set((s) => ({
+      readAt: { ...s.readAt, [chatId]: new Date().toISOString() },
+    })),
 }))

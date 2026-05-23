@@ -33,13 +33,27 @@
   flex-shrink: 0;
 }
 
-.headerInfo { display: flex; flex-direction: column; gap: 2px; }
+.headerInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
 
 .chatName {
   font-size: 15px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.92);
   line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Back button — hidden on desktop, shown on mobile (U4 mobile nav) */
+.backBtn {
+  display: none;
 }
 
 .chatSub {
@@ -353,4 +367,80 @@
 @keyframes fadeIn {
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Scroll-to-bottom button (U6) */
+.scrollDownBtn {
+  position: absolute;
+  bottom: 80px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(168, 85, 247, 0.25);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: background 0.15s;
+  animation: fadeInScale 0.15s ease;
+}
+
+.scrollDownBtn:hover { background: rgba(168, 85, 247, 0.42); }
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Mobile (< 640px) ──────────────────────────────────────────────────────── */
+@media (max-width: 639px) {
+  .area {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    z-index: 1;
+  }
+
+  .areaHidden {
+    display: none;
+  }
+
+  .backBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    border-radius: 8px;
+    min-width: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
+    margin-right: 2px;
+    transition: color 0.15s;
+  }
+
+  .backBtn:hover { color: rgba(255, 255, 255, 0.95); }
+
+  .inputRow {
+    padding-bottom: calc(10px + var(--safe-bottom));
+  }
+
+  .msgRow {
+    max-width: 86%;
+  }
+
+  .scrollDownBtn {
+    bottom: calc(72px + var(--safe-bottom));
+  }
 }
